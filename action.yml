@@ -1,0 +1,159 @@
+# build-repo: the root action, and the one GitHub Marketplace lists. Builds the APT and DNF
+# repositories site from a directory of .deb/.rpm files, signed when a pin and a key are given,
+# and uploads it as a Pages artifact. Contract: docs/actions.md#build-repo. The work is done by
+# lib/action.sh → lib/pages-repo.sh.
+name: pkg-pages
+description: Build signed APT and DNF/RPM repositories from .deb and .rpm files, ready for GitHub Pages
+author: ziptie-soft
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  packages:
+    description: >-
+      Directory holding every .deb and .rpm the site publishes: this release's and the earlier
+      ones (see fetch-history). Name, version and architecture are read from each package's
+      metadata, not from its file name.
+    required: true
+  version:
+    description: The version this release publishes; the site fails to build unless it is among the packages.
+    required: true
+  name:
+    description: >-
+      Base name of the published files (<name>.asc, deb/<name>.list, rpm/<name>.repo) and of the
+      APT Origin/Label. Defaults to the repository name.
+    required: false
+    default: ''
+  title:
+    description: Landing page title and APT Description. Defaults to "<name> package repositories".
+    required: false
+    default: ''
+  description:
+    description: One line about the project for the landing page (plain text, HTML-escaped).
+    required: false
+    default: ''
+  homepage:
+    description: Project URL linked from the landing page. Defaults to the repository URL.
+    required: false
+    default: ''
+  base-url:
+    description: >-
+      Where the site is served (https:// or file:///). Defaults to
+      https://<owner, lowercased>.github.io/<repo>.
+    required: false
+    default: ''
+  suite:
+    description: APT suite and codename.
+    required: false
+    default: stable
+  component:
+    description: APT component.
+    required: false
+    default: main
+  deb-architectures:
+    description: >-
+      Space-separated Debian architectures that must each have a package of `version`
+      (e.g. "amd64 arm64"). Empty: whatever the packages contain. Architecture: all packages are
+      listed in every architecture.
+    required: false
+    default: ''
+  rpm-architectures:
+    description: >-
+      Space-separated RPM architectures that must each have a package of `version`
+      (e.g. "x86_64 aarch64"). Empty: whatever the packages contain. noarch packages are copied
+      into every rpm/<arch>/.
+    required: false
+    default: ''
+  public-key:
+    description: >-
+      Path, in the caller's checkout, of the committed public key (the pin). Absent file and
+      empty signing-key: unsigned site. Present file: signing-key is required and must be a
+      subkey of it (docs/signing.md).
+    required: false
+    default: packaging/signing/repo.asc
+  signing-key:
+    description: Armored secret signing subkey without a passphrase. Pass a secret; never log it.
+    required: false
+    default: ''
+  directory-listings:
+    description: Write an index.html into every directory (Pages serves no listings of its own).
+    required: false
+    default: 'true'
+  extra-site:
+    description: Optional directory merged into the site root (docs, badges); it may not overwrite repository files.
+    required: false
+    default: ''
+  out:
+    description: Site directory to create; must not exist.
+    required: false
+    default: site
+  upload:
+    description: Upload the site with actions/upload-pages-artifact (true) or only leave it in `out` (false).
+    required: false
+    default: 'true'
+  artifact-name:
+    description: Name of the Pages artifact when upload is true.
+    required: false
+    default: github-pages
+  retention-days:
+    description: Retention of the Pages artifact (deploying later in the run, or on a re-run, needs more than 1).
+    required: false
+    default: '1'
+  runner-mode:
+    description: >-
+      docker (default): run the tools in the pinned Debian image of images.env, on a runner with
+      Docker. host: the job already runs in a container with apt-ftparchive, createrepo_c, gpg,
+      rpmsign and rpmkeys installed.
+    required: false
+    default: docker
+
+outputs:
+  signed:
+    description: "'true' when the site is signed, 'false' when it is unsigned."
+    value: ${{ steps.run.outputs.signed }}
+  fingerprint:
+    description: Primary key fingerprint of the pin, when signed.
+    value: ${{ steps.run.outputs.fingerprint }}
+  site-path:
+    description: The site directory.
+    value: ${{ steps.run.outputs.site-path }}
+  artifact-id:
+    description: ID of the uploaded Pages artifact (download by ID, not by name).
+    value: ${{ steps.upload.outputs.artifact_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build the repositories
+      id: run
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_TITLE: ${{ inputs.title }}
+        INPUT_DESCRIPTION: ${{ inputs.description }}
+        INPUT_HOMEPAGE: ${{ inputs.homepage }}
+        INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_SUITE: ${{ inputs.suite }}
+        INPUT_COMPONENT: ${{ inputs.component }}
+        INPUT_DEB_ARCHITECTURES: ${{ inputs.deb-architectures }}
+        INPUT_RPM_ARCHITECTURES: ${{ inputs.rpm-architectures }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
+        INPUT_EXTRA_SITE: ${{ inputs.extra-site }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_UPLOAD: ${{ inputs.upload }}
+        INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
+        REPO_SIGNING_KEY: ${{ inputs.signing-key }}
+      run: '"$GITHUB_ACTION_PATH/lib/action.sh" build-repo'
+
+    - name: Upload the Pages artifact
+      id: upload
+      if: ${{ inputs.upload == 'true' }}
+      uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      with:
+        path: ${{ inputs.out }}
+        name: ${{ inputs.artifact-name }}
+        retention-days: ${{ inputs.retention-days }}

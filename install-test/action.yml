@@ -1,0 +1,39 @@
+# install-test: install a .deb or .rpm on a clean distribution container, as users would, after
+# checking an .rpm's signature against the pin, then run an optional smoke command. Contract:
+# docs/actions.md#install-test.
+name: pkg-pages install-test
+description: Install a .deb or .rpm in a clean distribution container and run a smoke test
+author: ziptie-soft
+
+inputs:
+  packages:
+    description: Newline-separated paths or globs of the packages to install together (all .deb or all .rpm).
+    required: true
+  distro:
+    description: >-
+      fedora, debian or ubuntu (the pinned images of images.env), or a full image reference
+      pinned by digest (name:tag@sha256:...).
+    required: true
+  public-key:
+    description: Pin to check .rpm signatures against before installing (skipped when the file is absent).
+    required: false
+    default: packaging/signing/repo.asc
+  smoke:
+    description: >-
+      Shell command run in the container after the install (as root, sh -eu). Empty: only check
+      that the install succeeded. Runs the caller's own code; never pass untrusted input here.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install and smoke-test
+      id: run
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_DISTRO: ${{ inputs.distro }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_SMOKE: ${{ inputs.smoke }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" install-test'

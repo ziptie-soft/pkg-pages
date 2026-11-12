@@ -1,0 +1,76 @@
+#!/bin/sh
+# Print one signing subkey of an offline primary key in the form the `signing-key` input wants:
+# armored, without the primary's secret and without a passphrase. Run it on the maintainer's
+# machine, never in CI, and pipe it straight into the secret store, for example:
+#
+#   ci-key --homedir <DIR> <SUB> | gh secret set REPO_SIGNING_KEY --env linux-signing
+#
+# Usage: ci-key [--homedir DIR] SUBKEY
+#   --homedir DIR  the GnuPG home that holds the primary key (default: gpg's own default)
+#   SUBKEY         the fingerprint of the signing subkey to export
+#
+# It asks for the key's passphrase on the terminal (or reads one line from stdin when stdin is
+# not a terminal). The key in DIR is not changed: the passphrase is removed in a temporary copy,
+# which is deleted on exit. See docs/signing.md.
+set -eu
+
+die() {
+    echo "ci-key: $*" >&2
+    exit 1
+}
+
+home=
+if [ "${1:-}" = --homedir ]; then
+    [ "$#" -ge 2 ] || die "usage: ci-key [--homedir DIR] SUBKEY"
+    home="$2"
+    shift 2
+fi
+[ "$#" -eq 1 ] || die "usage: ci-key [--homedir DIR] SUBKEY"
+sub="$1"
+case "$sub" in
+    *[!0-9A-Fa-f]* | '') die "SUBKEY must be a fingerprint (hex), not '$sub'" ;;
+esac
+[ "${#sub}" -ge 40 ] || die "SUBKEY must be the full fingerprint, not '$sub'"
+
+src() {
+    if [ -n "$home" ]; then gpg --homedir "$home" "$@"; else gpg "$@"; fi
+}
+
+# The subkey must exist and be able to sign.
+src --batch --with-colons --with-subkey-fingerprints --list-secret-keys 2> /dev/null |
+    awk -F: -v s="$sub" '
+        $1 == "ssb" { caps = $12; next }
+        $1 == "fpr" && toupper($10) == toupper(s) && caps ~ /s/ { found = 1 }
+        END { exit !found }' ||
+    die "$sub is not a secret signing subkey in ${home:-the default GnuPG home}"
+
+printf 'passphrase of %s: ' "$sub" >&2
+if [ -t 0 ]; then
+    stty -echo
+    trap 'stty echo' EXIT INT TERM
+    read -r pw || true
+    stty echo
+    trap - EXIT INT TERM
+    echo >&2
+else
+    read -r pw || true
+fi
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/ci-key.XXXXXX")"
+trap 'gpgconf --homedir "$tmp" --kill all > /dev/null 2>&1; rm -rf "$tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+chmod 700 "$tmp"
+t() { gpg --homedir "$tmp" "$@"; }
+
+# The trailing ! exports this subkey alone; the primary's secret becomes a stub.
+printf '%s\n' "$pw" | src --batch --pinentry-mode loopback --passphrase-fd 0 --armor \
+    --export-secret-subkeys "$sub!" 2> /dev/null | t --batch --quiet --import 2> /dev/null ||
+    die "couldn't export $sub (wrong passphrase?)"
+# gpg 2.4 has no export-reset-subkey-passwd: change the passphrase to an empty one instead. The
+# old passphrase, then the new one twice; gpg exits non-zero over the primary's stub.
+printf '%s\n\n\n' "$pw" | t --pinentry-mode loopback --command-fd 0 --passwd "$sub" > /dev/null 2>&1 || true
+echo probe | t --batch --quiet --pinentry-mode loopback --passphrase '' \
+    --local-user "$sub!" --sign > /dev/null 2>&1 ||
+    die "couldn't remove the passphrase of $sub (wrong passphrase, or not a signing subkey?)"
+t --batch --armor --export-secret-subkeys "$sub!"

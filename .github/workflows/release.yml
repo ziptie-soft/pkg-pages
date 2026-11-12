@@ -1,0 +1,33 @@
+name: Release
+
+# release-please keeps one release PR (conventional commits decide the bump). Merging it tags
+# vX.Y.Z and creates the GitHub release. Callers pin that tag's commit SHA.
+#
+# Not yet here (docs/releasing.md): the self-pin step that rewrites the reusable workflow's own
+# `ziptie-soft/pkg-pages/<action>@<sha>` references before the tag, and the floating vX tag.
+on:
+  push:
+    branches: [master]
+
+permissions: {}
+
+# Releases queue instead of cancelling: a cancelled run can leave a tag without its release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR / tag
+    if: ${{ github.repository_owner == 'ziptie-soft' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: write # the release commit, tag and GitHub release
+      issues: write # release-please labels
+      pull-requests: write # the release PR
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

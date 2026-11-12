@@ -1,0 +1,17 @@
+# Build and test output
+site/
+_site/
+dist/
+tests/tmp/
+*.log
+.env
+.env.*
+.DS_Store
+.fallow/
+.rumdl_cache/
+# Never commit key material: only the public pin of a test key belongs in tests/fixtures/.
+*.key
+*.sec
+*.rev
+gnupg/
+/tests/fixtures/hello-rust/target/

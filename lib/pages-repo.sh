@@ -1,0 +1,402 @@
+#!/bin/sh
+# Build the APT and DNF repositories site from a directory of .deb and .rpm files, ready to be
+# served by GitHub Pages (or any static file server). Rewritten from SkeLLLa/star-forge's
+# packaging/ci/pages-repo.sh to read each package's own metadata instead of matching file names.
+#
+# Usage:
+#   pages-repo.sh --packages DIR --out DIR --base-url URL --version VERSION --name NAME [OPTION]...
+#
+# Required:
+#   --packages DIR          every .deb and .rpm the site publishes (searched recursively); any
+#                           other file is an error
+#   --out DIR               the site directory to create; it must not exist
+#   --base-url URL          where OUT is served: https://... or file:///...
+#   --version VERSION       the release; a package of it must be among the packages
+#   --name NAME             base name of <name>.asc, deb/<name>.list, rpm/<name>.repo
+# Optional:
+#   --title TEXT            landing page title and APT Description (default "NAME package repositories")
+#   --description TEXT      one line for the landing page
+#   --homepage URL          project link on the landing page
+#   --suite SUITE           APT suite and codename (default stable)
+#   --component COMPONENT   APT component (default main)
+#   --deb-architectures "A B"  Debian architectures that must each have a VERSION package built
+#                           for exactly that architecture (all counts only when listed itself)
+#   --rpm-architectures "A B"  the same for RPM architectures (noarch likewise)
+#
+# Published architectures: those of the packages, plus the required ones. all/noarch packages
+# are listed in every one of them; with only all/noarch packages, amd64 arm64 / x86_64 aarch64.
+#   --public-key FILE       the pin; required when signing, published as <name>.asc
+#   --directory-listings true|false  an index.html in every directory (default true)
+#   --extra-site DIR        merged into the site root; may not overwrite a file of the site
+#   --import-key true|false first import REPO_SIGNING_KEY into GNUPGHOME, failing closed against
+#                           --public-key, as `linux-signing.sh import` does (default false)
+#
+# Signing: the site is signed when --import-key imported a key, or when GNUPGHOME is set and
+# already holds one: InRelease and Release.gpg, every .rpm (rpmsign) and every repomd.xml.
+# Otherwise it is unsigned ([trusted=yes], gpgcheck=0). Whether a run *must* be signed is decided
+# by the import, which fails closed (docs/signing.md).
+#
+# Tools: apt-ftparchive and dpkg-deb when there are .deb files; createrepo_c and rpm when there
+# are .rpm files; gpg, gpgv, rpmsign and rpmkeys when signing; gzip, sed, awk, find, sha256sum.
+#
+# Outputs (GITHUB_OUTPUT): signed=true|false, fingerprint, site-path; and PKG_PAGES_SIGNED,
+# PKG_PAGES_FINGERPRINT in GITHUB_ENV. Progress goes to stderr.
+set -eu
+
+lib="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=common.sh
+. "$lib/common.sh"
+# shellcheck source=packages.sh
+. "$lib/packages.sh"
+# shellcheck source=signing.sh
+. "$lib/signing.sh"
+
+usage() {
+    die "usage: $0 --packages DIR --out DIR --base-url URL --version VERSION --name NAME [OPTION]... (see the header of $0)"
+}
+
+packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
+suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true extra='' import_key=false
+while [ "$#" -gt 0 ]; do
+    [ "$#" -ge 2 ] || usage
+    case "$1" in
+        --packages) packages="$2" ;;
+        --out) out="$2" ;;
+        --base-url) base_url="${2%/}" ;;
+        --version) version="$2" ;;
+        --name) name="$2" ;;
+        --title) title="$2" ;;
+        --description) description="$2" ;;
+        --homepage) homepage="$2" ;;
+        --suite) suite="$2" ;;
+        --component) component="$2" ;;
+        --deb-architectures) deb_archs="$2" ;;
+        --rpm-architectures) rpm_archs="$2" ;;
+        --public-key) pin="$2" ;;
+        --directory-listings) listings="$2" ;;
+        --extra-site) extra="$2" ;;
+        --import-key) import_key="$2" ;;
+        *) usage ;;
+    esac
+    shift 2
+done
+check_bool import-key "$import_key"
+
+# --- Inputs ----------------------------------------------------------------------------------
+[ -n "$packages" ] && [ -n "$out" ] && [ -n "$base_url" ] && [ -n "$version" ] && [ -n "$name" ] || usage
+[ -d "$packages" ] || die "packages $packages is not a directory"
+[ ! -e "$out" ] && [ ! -L "$out" ] || die "out $out already exists"
+check_url base-url "$base_url"
+check_name name "$name"
+check_word suite "$suite"
+check_word component "$component"
+check_bool directory-listings "$listings"
+case "$version" in
+    '' | *[!A-Za-z0-9.+~_-]*) die "version must match [A-Za-z0-9.+~_-]+, not '$version'" ;;
+esac
+for a in $deb_archs; do check_word deb-architectures "$a"; done
+for a in $rpm_archs; do check_word rpm-architectures "$a"; done
+[ -z "$homepage" ] || check_url homepage "$homepage"
+[ -z "$extra" ] || [ -d "$extra" ] || die "extra-site $extra is not a directory"
+[ -n "$title" ] || title="$name package repositories"
+require_tools gzip sed awk find sha256sum sort
+
+# --- Read every package ----------------------------------------------------------------------
+work=''
+make_tmpdir work
+index="$work/index"   # kind<TAB>name<TAB>version<TAB>arch<TAB>sha256<TAB>path, one per package
+: > "$index"
+find "$packages" -type f | LC_ALL=C sort > "$work/files"
+[ -s "$work/files" ] || die "packages $packages holds no files"
+while IFS= read -r f; do
+    case "$f" in *"	"*) die "$f: tabs in file names are not supported" ;; esac
+    meta="$(pkg_meta "$f")"
+    sum="$(sha256sum "$f" | cut -d' ' -f1)"
+    key="$(printf '%s' "$meta" | cut -f1-4)"
+    # Same name+version+arch twice: fine if the bytes match (the same file fetched twice).
+    prev="$(awk -F'\t' -v k="$key" '$1"\t"$2"\t"$3"\t"$4 == k { print $5 "\t" $6; exit }' "$index")"
+    if [ -n "$prev" ]; then
+        [ "${prev%%	*}" = "$sum" ] ||
+            die "$f and ${prev#*	} are both $(printf '%s' "$key" | tr '\t' ' ') but differ"
+        continue
+    fi
+    printf '%s\t%s\t%s\n' "$meta" "$sum" "$f" >> "$index"
+done < "$work/files"
+
+has_deb=false has_rpm=false
+grep -q '^deb	' "$index" && has_deb=true
+grep -q '^rpm	' "$index" && has_rpm=true
+if [ "$has_deb" = true ]; then require_tools apt-ftparchive dpkg-deb; fi
+if [ "$has_rpm" = true ]; then require_tools createrepo_c rpm; fi
+
+# has_release KIND ARCH: true when a VERSION package of KIND is built for exactly ARCH (any arch
+# when ARCH is empty). An all/noarch package does not stand in for amd64: the assertion is that
+# users of ARCH get the release's binaries. List all or noarch to require those.
+has_release() {
+    while IFS='	' read -r _hk _hn _hv _ha _hs _hp; do
+        [ "$_hk" = "$1" ] || continue
+        [ -z "$2" ] || [ "$_ha" = "$2" ] || continue
+        pkg_matches_version "$_hk" "$_hv" "$version" && return 0
+    done < "$index"
+    return 1
+}
+if [ -z "$deb_archs$rpm_archs" ]; then
+    has_release deb '' || has_release rpm '' || die "no package of version $version among $packages"
+fi
+for a in $deb_archs; do has_release deb "$a" || die "no $a .deb of version $version among $packages"; done
+for a in $rpm_archs; do has_release rpm "$a" || die "no $a .rpm of version $version among $packages"; done
+
+# archs_of KIND REQUIRED DEFAULT: the architectures to publish: those found plus REQUIRED, without
+# all/noarch (listed in every architecture). DEFAULT when only all/noarch packages exist.
+archs_of() {
+    found="$(awk -F'\t' -v k="$1" '$1 == k { print $4 }' "$index")"
+    found="$(printf '%s\n%s\n' "$found" "$2" | tr ' ' '\n' | sed '/^$/d; /^all$/d; /^noarch$/d' |
+        LC_ALL=C sort -u | tr '\n' ' ')"
+    found="${found% }"
+    printf '%s\n' "${found:-$3}"
+}
+
+# --- Signing ---------------------------------------------------------------------------------
+# --import-key: the fail-closed import of REPO_SIGNING_KEY against the pin (signing.sh), in this
+# same process, so the key and the build share one GNUPGHOME and one container. Otherwise, a
+# key already in GNUPGHOME signs; only an explicit GNUPGHOME counts, because on a developer's
+# machine ~/.gnupg holds personal keys.
+fpr=
+if [ "$import_key" = true ]; then
+    require_tools gpg
+    [ -n "$pin" ] || die "--import-key needs --public-key"
+    fpr="$(signing_import "$pin")"
+elif [ -n "${GNUPGHOME:-}" ] && command -v gpg > /dev/null 2>&1; then
+    fpr="$(secret_fpr)"
+fi
+if [ -n "$fpr" ]; then
+    require_tools gpg gpgv
+    [ -n "$pin" ] || die "gpg holds a signing key but no public-key was given"
+    [ "$(pin_fpr "$pin")" = "$fpr" ] || die "the signing key $fpr is not the key of public-key $pin"
+    if [ "$has_rpm" = true ]; then require_tools rpmsign rpmkeys; fi
+fi
+gpg_sign() {
+    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$fpr" "$@"
+}
+
+mkdir -p "$out"
+[ -z "$fpr" ] || cp "$pin" "$out/$name.asc"
+
+# --- APT: one suite with one component -------------------------------------------------------
+deb_line=
+deb_list=
+if [ "$has_deb" = true ]; then
+    deb_list="$(archs_of deb "$deb_archs" "amd64 arm64")"
+    deb="$out/deb"
+    while IFS='	' read -r k n v a _s p; do
+        [ "$k" = deb ] || continue
+        dir="$deb/pool/$component/$(pool_prefix "$n")/$n"
+        mkdir -p "$dir"
+        cp "$p" "$dir/${n}_${v#*:}_$a.deb"
+    done < "$index"
+    (
+        cd "$deb"
+        for a in $deb_list; do
+            dir="dists/$suite/$component/binary-$a"
+            mkdir -p "$dir"
+            apt-ftparchive --arch "$a" packages "pool/$component" > "$dir/Packages"
+            gzip -9n < "$dir/Packages" > "$dir/Packages.gz"
+        done
+        apt-ftparchive \
+            -o "APT::FTPArchive::Release::Origin=$name" \
+            -o "APT::FTPArchive::Release::Label=$name" \
+            -o "APT::FTPArchive::Release::Suite=$suite" \
+            -o "APT::FTPArchive::Release::Codename=$suite" \
+            -o "APT::FTPArchive::Release::Architectures=$deb_list" \
+            -o "APT::FTPArchive::Release::Components=$component" \
+            -o "APT::FTPArchive::Release::Description=$title" \
+            release "dists/$suite" > Release.tmp
+        mv Release.tmp "dists/$suite/Release"
+    )
+    if [ -n "$fpr" ]; then
+        gpg_sign --clearsign --output "$deb/dists/$suite/InRelease" "$deb/dists/$suite/Release"
+        gpg_sign --armor --detach-sign --output "$deb/dists/$suite/Release.gpg" "$deb/dists/$suite/Release"
+        deb_line="deb [signed-by=/etc/apt/keyrings/$name.asc] $base_url/deb $suite $component"
+    else
+        deb_line="deb [trusted=yes] $base_url/deb $suite $component"
+    fi
+    printf '%s\n' "$deb_line" > "$deb/$name.list"
+fi
+
+# --- DNF: one repository per architecture, rpm/$basearch -------------------------------------
+rpm_list=
+if [ "$has_rpm" = true ]; then
+    rpm_list="$(archs_of rpm "$rpm_archs" "x86_64 aarch64")"
+    for a in $rpm_list; do
+        dir="$out/rpm/$a"
+        mkdir -p "$dir"
+        while IFS='	' read -r k n v pa _s p; do
+            [ "$k" = rpm ] || continue
+            [ "$pa" = "$a" ] || [ "$pa" = noarch ] || continue
+            cp "$p" "$dir/$n-$v.$pa.rpm"
+        done < "$index"
+        if [ -n "$fpr" ]; then
+            # Already-signed files (this release's, from sign-rpm) stay byte-identical; earlier
+            # releases' files, signed before the key existed or by a rotated subkey, are re-signed.
+            set -- "$dir"/*.rpm
+            sign_rpm "$pin" "$@"
+        fi
+        createrepo_c --quiet --compatibility "$dir" > /dev/null
+        [ -z "$fpr" ] || gpg_sign --armor --detach-sign --output "$dir/repodata/repomd.xml.asc" "$dir/repodata/repomd.xml"
+    done
+    if [ -n "$fpr" ]; then
+        rpm_check="gpgcheck=1
+repo_gpgcheck=1
+gpgkey=$base_url/$name.asc"
+    else
+        rpm_check="gpgcheck=0
+repo_gpgcheck=0"
+    fi
+    cat > "$out/rpm/$name.repo" << EOF
+[$name]
+name=$title
+baseurl=$base_url/rpm/\$basearch
+enabled=1
+$rpm_check
+EOF
+fi
+
+# --- The landing page ------------------------------------------------------------------------
+# Every caller-provided string is HTML-escaped. The install commands name the packages of VERSION.
+esc() { printf '%s' "$1" | html_escape; }
+names="$(while IFS='	' read -r k n v _a _s _p; do
+    pkg_matches_version "$k" "$v" "$version" && printf '%s\n' "$n"
+done < "$index" | LC_ALL=C sort -u | tr '\n' ' ')"
+names="${names% }"
+h_title="$(esc "$title")"
+h_name="$(esc "$name")"
+h_base="$(esc "$base_url")"
+h_names="$(esc "$names")"
+{
+    printf '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8">\n'
+    printf '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+    printf '    <title>%s</title>\n  </head>\n  <body>\n    <h1>%s</h1>\n' "$h_title" "$h_title"
+    [ -z "$description" ] || printf '    <p>%s</p>\n' "$(esc "$description")"
+    printf '    <p>Latest version: %s.' "$(esc "$version")"
+    [ -z "$homepage" ] || printf ' Project: <a href="%s">%s</a>.' "$(esc "$homepage")" "$(esc "$homepage")"
+    printf '</p>\n'
+    if [ -n "$fpr" ]; then
+        printf '    <p>Packages and repository metadata are signed with <a href="%s.asc">%s.asc</a>\n' "$h_name" "$h_name"
+        printf '    (fingerprint <code>%s</code>).</p>\n' "$fpr"
+    else
+        printf '    <p>These repositories are unsigned.</p>\n'
+    fi
+    if [ "$has_rpm" = true ]; then
+        printf '    <h2>DNF (Fedora, RHEL)</h2>\n'
+        printf '    <pre>sudo curl -fsSLo /etc/yum.repos.d/%s.repo %s/rpm/%s.repo\n' "$h_name" "$h_base" "$h_name"
+        printf 'sudo dnf install %s</pre>\n' "$h_names"
+    fi
+    if [ "$has_deb" = true ]; then
+        printf '    <h2>APT (Debian, Ubuntu)</h2>\n    <pre>'
+        if [ -n "$fpr" ]; then
+            printf 'sudo install -d -m 0755 /etc/apt/keyrings\n'
+            printf 'sudo curl -fsSLo /etc/apt/keyrings/%s.asc %s/%s.asc\n' "$h_name" "$h_base" "$h_name"
+        fi
+        printf 'sudo curl -fsSLo /etc/apt/sources.list.d/%s.list %s/deb/%s.list\n' "$h_name" "$h_base" "$h_name"
+        printf 'sudo apt update\nsudo apt install %s</pre>\n' "$h_names"
+    fi
+    printf '    <p>Browse:'
+    [ "$has_rpm" = false ] || printf ' <a href="rpm/">rpm/</a>'
+    [ "$has_deb" = false ] || printf ' <a href="deb/">deb/</a>'
+    printf '</p>\n  </body>\n</html>\n'
+} > "$out/index.html"
+: > "$out/.nojekyll"
+
+# --- extra-site ------------------------------------------------------------------------------
+if [ -n "$extra" ]; then
+    if [ -n "$(find "$extra" -type l)" ]; then die "extra-site $extra holds symbolic links"; fi
+    (cd "$extra" && find . -type f) > "$work/extra"
+    while IFS= read -r f; do
+        f="${f#./}"
+        [ ! -e "$out/$f" ] || die "extra-site $extra/$f would overwrite $f of the repositories"
+    done < "$work/extra"
+    cp -R "$extra/." "$out/"
+fi
+
+# --- Directory listings (Pages serves none); existing index.html files are kept ---------------
+if [ "$listings" = true ]; then
+    find "$out" -mindepth 1 -type d | LC_ALL=C sort | while IFS= read -r dir; do
+        [ ! -e "$dir/index.html" ] || continue
+        rel="$(esc "${dir#"$out"/}")"
+        {
+            printf '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8">\n'
+            printf '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            printf '    <title>Index of /%s/</title>\n  </head>\n  <body>\n' "$rel"
+            printf '    <h1>Index of /%s/</h1>\n    <ul>\n      <li><a href="../">../</a></li>\n' "$rel"
+            for entry in "$dir"/*; do
+                [ -e "$entry" ] || continue
+                e="${entry##*/}"
+                [ "$e" != index.html ] || continue
+                [ ! -d "$entry" ] || e="$e/"
+                e="$(esc "$e")"
+                printf '      <li><a href="%s">%s</a></li>\n' "$e" "$e"
+            done
+            printf '    </ul>\n  </body>\n</html>\n'
+        } > "$dir/index.html"
+    done
+fi
+
+# --- Self-check ------------------------------------------------------------------------------
+# What a client will see: the files exist, the release is listed, and the signatures verify
+# against the pin rather than against whatever key did the signing.
+need() { [ -s "$out/$1" ] || die "self-check: $1 is missing or empty"; }
+need index.html
+if [ "$has_deb" = true ]; then
+    need "deb/$name.list"
+    need "deb/dists/$suite/Release"
+    for a in $deb_list; do
+        need "deb/dists/$suite/$component/binary-$a/Packages.gz"
+    done
+    # Every required architecture's index lists the release (cargo-deb's 1.2.3-1 included).
+    for a in $deb_archs; do
+        [ "$a" != all ] || continue
+        gzip -cd "$out/deb/dists/$suite/$component/binary-$a/Packages.gz" | sed -n 's/^Version: //p' > "$work/versions"
+        ok=false
+        while IFS= read -r v; do
+            if pkg_matches_version deb "$v" "$version"; then ok=true; fi
+        done < "$work/versions"
+        [ "$ok" = true ] || die "self-check: binary-$a/Packages does not list $version"
+    done
+fi
+if [ "$has_rpm" = true ]; then
+    need "rpm/$name.repo"
+    for a in $rpm_list; do need "rpm/$a/repodata/repomd.xml"; done
+fi
+if [ -n "$fpr" ]; then
+    need "$name.asc"
+    gpg --batch --dearmor < "$pin" > "$work/pin.gpg"
+    verify() { gpgv --keyring "$work/pin.gpg" "$@" > /dev/null 2>&1 || die "self-check: $* does not verify against $pin"; }
+    if [ "$has_deb" = true ]; then
+        need "deb/dists/$suite/InRelease"
+        verify "$out/deb/dists/$suite/InRelease"
+        verify "$out/deb/dists/$suite/Release.gpg" "$out/deb/dists/$suite/Release"
+    fi
+    if [ "$has_rpm" = true ]; then
+        grep -qx gpgcheck=1 "$out/rpm/$name.repo" || die "self-check: gpgcheck=1 is missing from $name.repo"
+        for a in $rpm_list; do
+            verify "$out/rpm/$a/repodata/repomd.xml.asc" "$out/rpm/$a/repodata/repomd.xml"
+        done
+        set -- "$out"/rpm/*/*.rpm
+        check_rpm "$pin" "$@"
+    fi
+fi
+
+n_deb="$(grep -c '^deb	' "$index" || true)"
+n_rpm="$(grep -c '^rpm	' "$index" || true)"
+log "wrote $out for $name $version: $n_deb .deb, $n_rpm .rpm, ${fpr:+signed by }${fpr:-unsigned}"
+set_output site-path "$out"
+if [ -n "$fpr" ]; then
+    set_output signed true
+    set_output fingerprint "$fpr"
+    set_env PKG_PAGES_SIGNED true
+    set_env PKG_PAGES_FINGERPRINT "$fpr"
+else
+    set_output signed false
+    set_output fingerprint ''
+    set_env PKG_PAGES_SIGNED false
+fi

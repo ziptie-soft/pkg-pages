@@ -1,0 +1,278 @@
+name: CI
+
+# Pull requests and pushes to master. Every action is pinned to a commit SHA (Dependabot bumps
+# the SHA and its version comment); `mise run lint:pins` checks that locally and here.
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+# Nothing is granted by default; each job asks for what it needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Online mode (impostor commits, known-vulnerable actions, ref confusion); `mise run lint:zizmor`
+  # runs the offline audits locally.
+  zizmor:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          advanced-security: false
+
+  # ubuntu-slim (a container itself: no Docker, 15-minute jobs) for the jobs that need neither.
+  # Every check in `mise run check` except zizmor (above). The bats tests that need container
+  # tools or root skip here and run in `container-tests`.
+  static:
+    name: Static checks and unit tests
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install linters and bats (versions from mise.toml)
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install_args: bats jactionlint shellcheck rumdl
+          cache: false
+      - name: Checks
+        run: >-
+          mise run --jobs 4
+          lint:actions ::: lint:pins ::: lint:self-refs ::: lint:shell ::: md-check ::: test
+
+  # The whole bats suite as root in each images.env image, with every tool installed: signing on
+  # Fedora's rpm 6 and Debian's rpm 4.20, the site build, and installs from it with apt and dnf.
+  # `mise run test:containers` does the same locally.
+  container-tests:
+    name: Tests on ${{ matrix.distro }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            image: debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308
+          - distro: ubuntu
+            image: ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+          - distro: fedora
+            image: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the tools
+        shell: sh
+        run: . tests/install-tools.sh
+      - name: Run the tests
+        shell: sh
+        env:
+          PKG_PAGES_TEST_SYSTEM: '1'
+        run: bats tests
+
+  # The composite actions as callers use them, from this checkout (`uses: ./…` is fine here: this
+  # workflow is not shipped). A throwaway key is generated in the job; it signs nothing real.
+  actions:
+    name: Actions end to end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install rpmbuild
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
+
+      # Two releases: 1.0.0 (this one) and 0.9.0 (history), deb and rpm, arch-specific and not.
+      - name: Make test packages and a test key
+        id: fixtures
+        run: |
+          set -euo pipefail
+          for v in 1.0.0 0.9.0; do
+            dir=dist; [ "$v" = 1.0.0 ] || dir=history
+            tests/fixtures.sh deb "$dir" pptest "$v-1" amd64
+            tests/fixtures.sh rpm "$dir" pptest "$v" x86_64
+          done
+          tests/fixtures.sh deb dist pptest-data 1.0.0 all
+          tests/fixtures.sh rpm dist pptest-data 1.0.0 noarch
+          tests/fixtures.sh key "${RUNNER_TEMP}/key"
+          mkdir -p test-signing
+          cp "${RUNNER_TEMP}/key/pin.asc" test-signing/repo.asc
+          {
+            echo 'key<<PKG_PAGES_EOF'
+            cat "${RUNNER_TEMP}/key/ci.asc"
+            echo 'PKG_PAGES_EOF'
+          } >> "${GITHUB_OUTPUT}"
+          echo "fpr=$(cat "${RUNNER_TEMP}/key/fpr")" >> "${GITHUB_OUTPUT}"
+          rm -rf "${RUNNER_TEMP}/key"
+
+      - name: sign-rpm
+        id: sign
+        uses: ./sign-rpm
+        with:
+          packages: |
+            dist/*.rpm
+            history/*.rpm
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
+      - name: check-rpm
+        uses: ./check-rpm
+        with:
+          packages: dist/*.rpm
+          public-key: test-signing/repo.asc
+          allow-unsigned: 'false'
+
+      - name: install-test (fedora, signed .rpm)
+        uses: ./install-test
+        with:
+          packages: dist/*.rpm
+          distro: fedora
+          public-key: test-signing/repo.asc
+          smoke: test -f /usr/share/pptest/1.0.0 && test -f /usr/share/pptest-data/1.0.0
+
+      - name: install-test (debian)
+        uses: ./install-test
+        with:
+          packages: dist/*.deb
+          distro: debian
+          smoke: test -f /usr/share/pptest/1.0.0-1
+
+      - name: install-test (ubuntu)
+        uses: ./install-test
+        with:
+          packages: dist/*.deb
+          distro: ubuntu
+
+      - name: Gather this release and the history
+        run: mkdir all && cp dist/* history/* all/
+
+      - name: build-repo (signed)
+        id: repo
+        uses: ./
+        with:
+          packages: all
+          version: 1.0.0
+          name: pptest
+          description: pkg-pages CI <self-test>
+          base-url: file://${{ github.workspace }}/site
+          deb-architectures: amd64
+          rpm-architectures: x86_64
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+          artifact-name: pkg-pages-selftest-site
+          retention-days: '1'
+
+      - name: build-repo (unsigned)
+        id: unsigned
+        uses: ./
+        with:
+          packages: all
+          version: 1.0.0
+          name: pptest
+          base-url: https://example.github.io/pptest
+          public-key: test-signing/absent.asc
+          out: site-unsigned
+          upload: 'false'
+
+      - name: build-repo (pin without key, must fail)
+        id: no-key
+        continue-on-error: true
+        uses: ./
+        with:
+          packages: all
+          version: 1.0.0
+          name: pptest
+          public-key: test-signing/repo.asc
+          out: site-no-key
+          upload: 'false'
+
+      - name: Check the outputs and the sites
+        env:
+          SIGNED: ${{ steps.sign.outputs.signed }}
+          REPO_SIGNED: ${{ steps.repo.outputs.signed }}
+          REPO_FPR: ${{ steps.repo.outputs.fingerprint }}
+          FPR: ${{ steps.fixtures.outputs.fpr }}
+          ARTIFACT_ID: ${{ steps.repo.outputs.artifact-id }}
+          UNSIGNED: ${{ steps.unsigned.outputs.signed }}
+          NO_KEY: ${{ steps.no-key.outcome }}
+        run: |
+          set -euo pipefail
+          test "${SIGNED}" = true
+          test "${REPO_SIGNED}" = true
+          test "${REPO_FPR}" = "${FPR}"
+          test -n "${ARTIFACT_ID}"
+          test "${UNSIGNED}" = false
+          test "${NO_KEY}" = failure
+          test ! -e site-no-key
+          # Files written in the containers belong to the runner user.
+          test "$(stat -c %U site/index.html)" = "$(id -un)"
+          test "$(stat -c %U dist/pptest-1.0.0-1.x86_64.rpm)" = "$(id -un)"
+          rm -rf site-unsigned
+          test -s site/pptest.asc
+          test -s site/deb/dists/stable/InRelease
+          test -s site/rpm/x86_64/repodata/repomd.xml.asc
+          grep -q '&lt;self-test&gt;' site/index.html
+          ls site/rpm/x86_64/
+
+  # package-rust on both architectures, then installing what it built.
+  package-rust:
+    name: package-rust (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: package-rust
+        id: pkg
+        uses: ./package-rust
+        with:
+          working-directory: tests/fixtures/hello-rust
+
+      - name: install-test (debian)
+        uses: ./install-test
+        with:
+          packages: tests/fixtures/hello-rust/${{ steps.pkg.outputs.deb }}
+          distro: debian
+          smoke: pkg-pages-hello | grep -qx 'hello from pkg-pages 0.3.1'
+
+      - name: install-test (fedora)
+        uses: ./install-test
+        with:
+          packages: tests/fixtures/hello-rust/${{ steps.pkg.outputs.rpm }}
+          distro: fedora
+          smoke: pkg-pages-hello | grep -qx 'hello from pkg-pages 0.3.1'

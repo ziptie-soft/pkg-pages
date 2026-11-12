@@ -1,0 +1,3 @@
+# pkg-pages
+
+@AGENTS.md

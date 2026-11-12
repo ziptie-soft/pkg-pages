@@ -1,0 +1,42 @@
+# check-rpm: fail unless every .rpm carries a valid signature by the committed pin, the way dnf
+# checks with gpgcheck=1. Needs no secret. Contract: docs/actions.md#check-rpm.
+name: pkg-pages check-rpm
+description: Verify .rpm signatures against a committed public key
+author: ziptie-soft
+
+inputs:
+  packages:
+    description: Newline-separated paths or globs of the .rpm files to check.
+    required: true
+  public-key:
+    description: Path of the committed public key (the pin), in the caller's checkout.
+    required: false
+    default: packaging/signing/repo.asc
+  allow-unsigned:
+    description: >-
+      When the pin file is absent: 'true' passes with a notice (the project has not started
+      signing yet), 'false' fails. Ignored once the pin exists.
+    required: false
+    default: 'true'
+  runner-mode:
+    description: docker (pinned Fedora image of images.env) or host (rpmkeys and gpg already installed).
+    required: false
+    default: docker
+
+outputs:
+  checked:
+    description: "'true' when signatures were checked, 'false' when skipped for a missing pin."
+    value: ${{ steps.run.outputs.checked }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the signatures
+      id: run
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_ALLOW_UNSIGNED: ${{ inputs.allow-unsigned }}
+        INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" check-rpm'

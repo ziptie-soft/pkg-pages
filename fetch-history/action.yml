@@ -1,0 +1,58 @@
+# fetch-history: download the .deb/.rpm assets of the latest published releases, so the site keeps
+# earlier versions (Pages replaces the whole site on every deploy). Contract:
+# docs/actions.md#fetch-history.
+name: pkg-pages fetch-history
+description: Download earlier GitHub releases' .deb and .rpm assets for an APT/DNF repository
+author: ziptie-soft
+
+inputs:
+  dir:
+    description: Directory to download into (created if missing; existing files are kept).
+    required: true
+  keep:
+    description: How many published releases before the current one to fetch (0 = none).
+    required: false
+    default: '9'
+  patterns:
+    description: Newline-separated asset globs for `gh release download --pattern`.
+    required: false
+    default: |
+      *.deb
+      *.rpm
+  exclude-tag:
+    description: Tag of the current release, which is skipped (its packages come from this run's artifacts).
+    required: false
+    default: ''
+  include-prereleases:
+    description: Also fetch pre-releases.
+    required: false
+    default: 'false'
+  repository:
+    description: owner/repo whose releases to read.
+    required: false
+    default: ${{ github.repository }}
+  token:
+    description: Token with contents:read on `repository`.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tags:
+    description: Space-separated tags whose assets were fetched.
+    value: ${{ steps.run.outputs.tags }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch earlier releases
+      id: run
+      shell: bash
+      env:
+        INPUT_DIR: ${{ inputs.dir }}
+        INPUT_KEEP: ${{ inputs.keep }}
+        INPUT_PATTERNS: ${{ inputs.patterns }}
+        INPUT_EXCLUDE_TAG: ${{ inputs.exclude-tag }}
+        INPUT_INCLUDE_PRERELEASES: ${{ inputs.include-prereleases }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" fetch-history'

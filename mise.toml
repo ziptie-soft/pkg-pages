@@ -1,0 +1,77 @@
+# Development tools for pkg-pages. `mise trust && mise install`, then `mise run check`.
+# CI installs the same pins through jdx/mise-action, so local and CI runs use the same bits.
+# The actions themselves need none of these: they run on the caller's runner and in the
+# containers of images.env.
+
+[settings]
+http_retries = 3
+pin = true
+
+[tools]
+# Tests (`test`; `test:containers` runs them in the images.env containers too).
+bats = "1.14.0"
+# Workflow, action.yml and dependabot.yml lint, with shellcheck on run: scripts (`lint:actions`).
+jactionlint = "2.4.0"
+shellcheck = "0.11.0"
+# Markdown lint (`md-check`, .rumdl.toml).
+rumdl = "0.3.2"
+# Workflow and action security audit (`lint:zizmor`).
+zizmor = "1.31.1"
+# Agent tooling: the fff and ripwire MCP servers in .mcp.json.
+"github:dmtrKovalenko/fff.nvim" = { version = "0.11.0", bin = "fff-mcp", platforms = { linux-x64 = { asset_pattern = "fff-mcp-x86_64-unknown-linux-musl" }, linux-arm64 = { asset_pattern = "fff-mcp-aarch64-unknown-linux-musl" }, macos-x64 = { asset_pattern = "fff-mcp-x86_64-apple-darwin" }, macos-arm64 = { asset_pattern = "fff-mcp-aarch64-apple-darwin" } } }
+"github:redhat-et/ripwire" = { version = "0.6.8", bin = "ripwire", platforms = { linux-x64 = { asset_pattern = "ripwire-*-linux-x64.tar.gz" }, linux-arm64 = { asset_pattern = "ripwire-*-linux-arm64.tar.gz" }, macos-arm64 = { asset_pattern = "ripwire-*-macos-arm64.tar.gz" } } }
+
+[tasks."lint:actions"]
+description = "jactionlint (pedantic, .github/jactionlint.yaml): every workflow, action.yml and dependabot.yml"
+run = "jactionlint --strict-exit"
+
+[tasks."lint:pins"]
+description = "Every `uses:` pinned to a full commit SHA, every image listed in images.env"
+run = "dev/check-action-pins.sh .github/workflows/*.yml action.yml */action.yml"
+
+[tasks."lint:self-refs"]
+description = "No `uses: ./…` in shipped actions or reusable workflows (it resolves in the caller's checkout)"
+run = "dev/check-self-refs.sh"
+
+[tasks."lint:zizmor"]
+description = "zizmor: workflow and action security audit"
+run = "zizmor --offline .github/workflows action.yml */action.yml"
+
+[tasks."lint:shell"]
+description = "shellcheck the scripts (-S info) and the bats tests (-S warning; .shellcheckrc)"
+run = [
+  "shellcheck -S info -x dev/*.sh lib/*.sh tests/*.sh tools/ci-key",
+  "shellcheck -S warning -x tests/*.bats tests/helpers.bash",
+]
+
+[tasks.md-check]
+description = "Lint Markdown files (.rumdl.toml), git-ignored notes in docs/ included"
+run = "rumdl check ."
+
+[tasks.fmt]
+description = "Format Markdown with rumdl"
+run = "rumdl fmt ."
+
+[tasks.test]
+description = "bats tests (tests/*.bats); those needing container tools or root skip"
+run = "bats tests"
+
+[tasks."test:containers"]
+description = "The whole bats suite as root in the Debian, Ubuntu and Fedora images (podman or docker)"
+run = [
+  "tests/container.sh debian",
+  "tests/container.sh ubuntu",
+  "tests/container.sh fedora",
+]
+
+[tasks.check]
+description = "Everything CI's static job checks (CI also runs test:containers and the actions)"
+depends = [
+  "lint:actions",
+  "lint:pins",
+  "lint:self-refs",
+  "lint:zizmor",
+  "lint:shell",
+  "md-check",
+  "test",
+]

@@ -1,0 +1,157 @@
+# The turnkey path: sign → install test → fetch history → build repo → deploy to GitHub Pages,
+# as one reusable workflow. Contract: docs/actions.md#publish-reusable-workflow.
+# Status: interface only; it fails until its jobs are implemented. The jobs it will hold are in
+# docs/design.md#jobs-of-the-reusable-workflow; each uses this repository's actions as
+# ziptie-soft/pkg-pages/<action>@<sha>, never ./<action> (dev/check-self-refs.sh).
+name: Publish packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The version being released; its packages must be among the artifacts.
+        required: true
+        type: string
+      tag:
+        description: The release tag; skipped by fetch-history, compared by skip-if-newer.
+        required: true
+        type: string
+      deb-artifacts:
+        description: download-artifact pattern of this run's .deb artifacts (empty for none).
+        required: false
+        type: string
+        default: ''
+      rpm-artifacts:
+        description: download-artifact pattern of this run's .rpm artifacts (empty for none).
+        required: false
+        type: string
+        default: ''
+      name:
+        description: Base name of the published files; defaults to the repository name.
+        required: false
+        type: string
+        default: ''
+      title:
+        required: false
+        type: string
+        default: ''
+      description:
+        required: false
+        type: string
+        default: ''
+      homepage:
+        required: false
+        type: string
+        default: ''
+      base-url:
+        required: false
+        type: string
+        default: ''
+      suite:
+        required: false
+        type: string
+        default: stable
+      component:
+        required: false
+        type: string
+        default: main
+      deb-architectures:
+        required: false
+        type: string
+        default: ''
+      rpm-architectures:
+        required: false
+        type: string
+        default: ''
+      public-key:
+        description: Path of the committed pin in the caller's repository.
+        required: false
+        type: string
+        default: packaging/signing/repo.asc
+      signing-environment:
+        description: >-
+          GitHub environment of the caller's repository holding the signing secret, used by the
+          sign and build jobs only. Restrict it to the default branch.
+        required: false
+        type: string
+        default: linux-signing
+      keep-releases:
+        required: false
+        type: number
+        default: 9
+      history-patterns:
+        required: false
+        type: string
+        default: |
+          *.deb
+          *.rpm
+      install-tests:
+        description: >-
+          JSON list of {"distro": "fedora|debian|ubuntu|<image@digest>", "arch":
+          "x86_64|aarch64"} to install-test on; [] for none.
+        required: false
+        type: string
+        default: '[{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"},{"distro":"ubuntu","arch":"x86_64"}]'
+      smoke:
+        description: Smoke command run after each install test (the caller's own code).
+        required: false
+        type: string
+        default: ''
+      deploy:
+        description: Deploy to GitHub Pages (true) or only upload the site artifact (false).
+        required: false
+        type: boolean
+        default: true
+      pages-environment:
+        required: false
+        type: string
+        default: github-pages
+      skip-if-newer:
+        description: Don't deploy when a newer release is already published (a re-run of an older run).
+        required: false
+        type: boolean
+        default: true
+      extra-artifact-ids:
+        description: Comma-separated artifact IDs merged into the site root before deploying.
+        required: false
+        type: string
+        default: ''
+    secrets:
+      signing-key:
+        description: >-
+          Map it from the caller's secret (secrets.REPO_SIGNING_KEY, for example); it resolves to
+          that secret's value in signing-environment. Omit it for unsigned packages.
+        required: false
+    outputs:
+      signed:
+        description: "'true' when packages and repositories were signed."
+        value: ${{ jobs.not-implemented.outputs.signed }}
+      signed-rpm-artifact-id:
+        description: Artifact ID of the signed .rpm files; attach these to the release, not the unsigned ones.
+        value: ${{ jobs.not-implemented.outputs.signed-rpm-artifact-id }}
+      site-artifact-id:
+        description: Artifact ID of the Pages site.
+        value: ${{ jobs.not-implemented.outputs.site-artifact-id }}
+      page-url:
+        description: URL of the deployed site, when deployed.
+        value: ${{ jobs.not-implemented.outputs.page-url }}
+
+permissions: {}
+
+jobs:
+  not-implemented:
+    name: Not implemented yet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      signed: ''
+      signed-rpm-artifact-id: ''
+      site-artifact-id: ''
+      page-url: ''
+    steps:
+      - name: Fail
+        shell: bash
+        run: |
+          echo "::error::ziptie-soft/pkg-pages publish.yml is not implemented yet; use the composite actions (docs/actions.md)"
+          exit 1

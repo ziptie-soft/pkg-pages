@@ -1,0 +1,43 @@
+# sign-rpm: sign .rpm files in place with the CI subkey, after checking the key fails closed
+# against the committed pin, then verify them against the pin. Contract: docs/actions.md#sign-rpm.
+name: pkg-pages sign-rpm
+description: Sign .rpm files with a CI signing subkey checked against a committed public key
+author: ziptie-soft
+
+inputs:
+  packages:
+    description: Newline-separated paths or globs of the .rpm files to sign in place.
+    required: true
+  public-key:
+    description: Path of the committed public key (the pin), in the caller's checkout.
+    required: false
+    default: packaging/signing/repo.asc
+  signing-key:
+    description: Armored secret signing subkey without a passphrase. Pass a secret; never log it.
+    required: false
+    default: ''
+  runner-mode:
+    description: docker (pinned Fedora image of images.env) or host (rpmsign, rpmkeys and gpg already installed).
+    required: false
+    default: docker
+
+outputs:
+  signed:
+    description: "'true' when the packages were signed; 'false' when no pin and no key (passed through unsigned)."
+    value: ${{ steps.run.outputs.signed }}
+  fingerprint:
+    description: Primary key fingerprint of the pin, when signed.
+    value: ${{ steps.run.outputs.fingerprint }}
+
+runs:
+  using: composite
+  steps:
+    - name: Sign the packages
+      id: run
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
+        REPO_SIGNING_KEY: ${{ inputs.signing-key }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" sign-rpm'

@@ -1,0 +1,6 @@
+pkg-pages
+Copyright 2026 pkg-pages contributors
+
+Parts of lib/ and dev/ are derived from the release tooling of SkeLLLa/star-forge,
+SkeLLLa/plasma-drop and SkeLLLa/cainary, contributed here by their author under the
+Apache License 2.0.

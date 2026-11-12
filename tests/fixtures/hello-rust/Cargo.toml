@@ -1,0 +1,19 @@
+# A minimal crate for the package-rust tests: one binary, packaged as .deb and .rpm.
+[package]
+name = "pkg-pages-hello"
+version = "0.3.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "pkg-pages test package"
+publish = false
+
+[[bin]]
+name = "pkg-pages-hello"
+path = "src/main.rs"
+
+[package.metadata.deb]
+maintainer = "pkg-pages tests <test@example.invalid>"
+assets = [["target/release/pkg-pages-hello", "usr/bin/", "755"]]
+
+[package.metadata.generate-rpm]
+assets = [{ source = "target/release/pkg-pages-hello", dest = "/usr/bin/pkg-pages-hello", mode = "755" }]

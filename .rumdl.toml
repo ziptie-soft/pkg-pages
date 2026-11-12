@@ -1,0 +1,18 @@
+[global]
+# Also lint the git-ignored notes (docs/plans, docs/research, docs/review); the exclude list
+# keeps tool state out.
+respect-gitignore = false
+exclude = [
+  ".claude",
+  ".serena",
+  "**/CHANGELOG.md",
+]
+
+# Prose is hand-wrapped at 100 columns; tables and code blocks carry long literal lines.
+[MD013]
+line-length = 100
+tables = false
+code-blocks = false
+
+[MD033]
+allowed-elements = ["details", "summary"]

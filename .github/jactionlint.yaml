@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/jdx/jactionlint/main/schema/jactionlint-config.json
+# jactionlint (`mise run lint:actions`, run with --strict-exit): every workflow, every
+# action.yml and dependabot.yml. Rules: https://jactionlint.jdx.dev/rules
+profile: pedantic
+
+# Workflow and action security is also audited by zizmor (`mise run lint:zizmor`), online in CI.
+online: false
+
+self-hosted-runner:
+  labels: []
+
+rules:
+  # `uses: $/path` needs runner 2.336+ and dev/check-action-pins.sh doesn't parse it. The only
+  # `./` uses are in ci.yml, which tests this checkout's actions on purpose; shipped code may not
+  # use either form (dev/check-self-refs.sh).
+  self-repository: off
+
+ignores:
+  - rule: [unused-workflow-input, unused-workflow-secret]
+    file: .github/workflows/publish.yml
+    reason: publish.yml declares its interface before its jobs exist
+    expires: "2027-06-30"

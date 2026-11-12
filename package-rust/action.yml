@@ -1,0 +1,87 @@
+# package-rust: build a Rust crate's .deb and .rpm with cargo-deb and cargo-generate-rpm, checked
+# against the crate version, ready to upload as artifacts for sign-rpm, build-repo or publish.yml.
+# Runs in the build job, never in one that holds a signing key. The caller installs Rust first
+# (rustup, or a toolchain action). Contract: docs/actions.md#package-rust; other build tools:
+# docs/building.md. The work is done by lib/package-rust.sh.
+name: pkg-pages package-rust
+description: Build .deb and .rpm packages of a Rust crate with cargo-deb and cargo-generate-rpm
+author: ziptie-soft
+
+inputs:
+  target:
+    description: >-
+      Rust target triple (e.g. aarch64-unknown-linux-gnu). Empty: the runner's own. A cross target
+      needs its linker; building on an arm runner is simpler.
+    required: false
+    default: ''
+  package:
+    description: "Crate of a workspace (cargo --package). Empty: the crate in working-directory."
+    required: false
+    default: ''
+  formats:
+    description: Space-separated package formats to build, deb and/or rpm.
+    required: false
+    default: deb rpm
+  version:
+    description: >-
+      Version to give both packages instead of Cargo.toml's (a '-' becomes '~' in the .rpm, which
+      forbids '-' in versions).
+    required: false
+    default: ''
+  out:
+    description: Directory the packages are written to (relative to working-directory).
+    required: false
+    default: dist
+  build:
+    description: >-
+      'true' runs `cargo build --release --locked` first; 'false' packages binaries that an
+      earlier step built.
+    required: false
+    default: 'true'
+  working-directory:
+    description: Directory of the crate or workspace, relative to the checkout.
+    required: false
+    default: .
+  cargo-deb-version:
+    description: cargo-deb version, installed with `cargo install --locked` unless already present.
+    required: false
+    default: 3.8.0
+  cargo-generate-rpm-version:
+    description: cargo-generate-rpm version, installed with `cargo install --locked` unless already present.
+    required: false
+    default: 0.21.1
+
+outputs:
+  deb:
+    description: Path of the .deb (relative to working-directory), empty when not built.
+    value: ${{ steps.run.outputs.deb }}
+  rpm:
+    description: Path of the .rpm (relative to working-directory), empty when not built.
+    value: ${{ steps.run.outputs.rpm }}
+  deb-arch:
+    description: Debian architecture of the .deb (amd64, arm64, ...).
+    value: ${{ steps.run.outputs.deb-arch }}
+  rpm-arch:
+    description: RPM architecture of the .rpm (x86_64, aarch64, ...).
+    value: ${{ steps.run.outputs.rpm-arch }}
+  version:
+    description: The version the packages were checked against.
+    value: ${{ steps.run.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build the packages
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_PACKAGE: ${{ inputs.package }}
+        INPUT_FORMATS: ${{ inputs.formats }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_BUILD: ${{ inputs.build }}
+        INPUT_CARGO_DEB_VERSION: ${{ inputs.cargo-deb-version }}
+        INPUT_CARGO_GENERATE_RPM_VERSION: ${{ inputs.cargo-generate-rpm-version }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" package-rust'

@@ -1,0 +1,52 @@
+name: Commits
+
+# Pull requests are rebased onto master, never squashed, so every commit lands as it is and
+# release-please reads each one: every commit subject must be a Conventional Commit, and there
+# may be no merge commits. The PR title doesn't matter. Its own workflow, so a PR that only
+# changes text doesn't wait for CI.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional:
+    name: Conventional commits
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check every commit of the pull request
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9./_-]+\))?!?: [^[:space:]]'
+          bad=0
+          if [ -n "$(git rev-list --merges "${BASE}..${HEAD}")" ]; then
+            echo "::error::the pull request has merge commits; rebase it onto master instead"
+            bad=1
+          fi
+          while IFS= read -r line; do
+            sha="${line%% *}"
+            subject="${line#* }"
+            if ! printf '%s\n' "${subject}" | grep -Eq "${pattern}"; then
+              echo "::error::${sha} is not a Conventional Commit (<type>(<scope>)!: <description>): ${subject}"
+              bad=1
+            fi
+          done < <(git log --format='%h %s' "${BASE}..${HEAD}")
+          exit "${bad}"
