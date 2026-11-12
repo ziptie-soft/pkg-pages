@@ -157,6 +157,8 @@ unsigned repositories. Full contract: [docs/actions.md](docs/actions.md). Settin
 - [Design](docs/design.md): architecture, security model, GitHub platform constraints,
   decisions.
 - [Actions](docs/actions.md): the inputs, outputs and failure modes of every part.
+- [Recipes](docs/recipes.md): copy-ready workflows: signed, unsigned, `.deb` or `.rpm` only, one
+  architecture, deploying later, your own job layout.
 - [Signing](docs/signing.md): key model, pin, environment, creating and rotating keys.
 - [Releasing](docs/releasing.md): versioning, the self-pin release and how callers pin.
 - [Building](docs/building.md): `package-rust`, other build tools, and the build actions worth

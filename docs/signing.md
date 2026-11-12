@@ -62,7 +62,13 @@ subkey's. `ci-key` is [`tools/ci-key`](../tools/ci-key) from this repository.
    ci-key --homedir <DIR> <SUB> | gh secret set REPO_SIGNING_KEY --env linux-signing
    ```
 
-   Never store the key as a repository secret: any workflow on any branch could read it.
+   Never store the key as a repository secret: any workflow on any branch could read it. If
+   your releases run on pushed tags rather than on the default branch, also allow the release
+   tags, and protect them with a tag ruleset:
+
+   ```sh
+   gh api -X POST repos/<owner>/<repo>/environments/linux-signing/deployment-branch-policies -f name='v*' -f type=tag
+   ```
 
 4. Keep two things offline, separately: `<DIR>` (the primary's secret, passphrase-protected), and
    the revocation certificate gpg wrote to `<DIR>/openpgp-revocs.d/<FPR>.rev`, which revokes the
