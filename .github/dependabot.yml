@@ -15,6 +15,10 @@ updates:
       interval: 'weekly'
     cooldown:
       default-days: 7
+    # publish.yml's references to this repository's own actions are rewritten by dev/self-pin.sh
+    # at each release (docs/releasing.md#the-self-pin), never by Dependabot.
+    ignore:
+      - dependency-name: 'ziptie-soft/pkg-pages*'
     groups:
       all-actions:
         patterns:
