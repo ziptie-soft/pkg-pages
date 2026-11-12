@@ -69,9 +69,19 @@ jobs:
           permission-contents: write # push the pin commit to the release PR branch
           permission-workflows: write # the pin commit changes .github/workflows/publish.yml
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The script runs from the trusted commit that triggered this run (W, on master). The
+      # release PR branch is only data: nothing from it is executed while the token exists.
+      - name: Checkout W (the scripts)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trusted
+          persist-credentials: false
+
+      - name: Checkout the release PR branch (the files to pin)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.release-please.outputs.pr-branch }}
+          path: release-pr
           fetch-depth: 0
           persist-credentials: false
 
@@ -83,19 +93,20 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
-          git merge-base --is-ancestor "${W}" HEAD ||
+          pin=trusted/dev/self-pin.sh
+          git -C release-pr merge-base --is-ancestor "${W}" HEAD ||
             { echo "::error::the release PR branch is not based on ${W}"; exit 1; }
-          version="$(sed -n 's/^ *"\.": *"\([0-9.]*\)".*/\1/p' .release-please-manifest.json)"
-          dev/self-pin.sh "${W}" "${version}"
-          if git diff --quiet; then
+          version="$(sed -n 's/^ *"\.": *"\([0-9.]*\)".*/\1/p' release-pr/.release-please-manifest.json)"
+          "${pin}" -C release-pr "${W}" "${version}"
+          if git -C release-pr diff --quiet; then
             echo "publish.yml already points at ${W}"
           else
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -qam "chore(release): pin publish.yml to ${W:0:12}"
-            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+            git -C release-pr config user.name 'ziptie-soft-release[bot]'
+            git -C release-pr config user.email 'ziptie-soft-release[bot]@users.noreply.github.com'
+            git -C release-pr commit -qam "chore(release): pin publish.yml to ${W:0:12}"
+            git -C release-pr push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
           fi
-          dev/self-pin.sh --check HEAD
+          "${pin}" -C release-pr --check HEAD
 
   # The guarantee callers rely on, checked on the tagged commit. A failure here means the release
   # must be replaced (a fix release); the tag itself is immutable.
@@ -108,12 +119,18 @@ jobs:
     permissions:
       contents: read # checkout
     steps:
+      # The released commit is the one this run was triggered by.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.release-please.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Check the self-pin
         shell: bash
-        run: dev/self-pin.sh --check HEAD
+        env:
+          RELEASED: ${{ needs.release-please.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "${RELEASED}" = "${GITHUB_SHA}" ||
+            { echo "::error::the release was made from ${RELEASED}, not ${GITHUB_SHA}"; exit 1; }
+          dev/self-pin.sh --check HEAD

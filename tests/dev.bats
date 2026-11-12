@@ -209,3 +209,19 @@ selfpin_repo() {
     assert_status 1
     assert_output_contains "several commits"
 }
+
+@test "self-pin -C: the script from one checkout works on another (release.yml's trusted copy)" {
+    selfpin_repo
+    rm dev/self-pin.sh
+    git commit -qam 'chore: no script on this branch'
+    cd /
+    run "$ROOT/dev/self-pin.sh" -C "$R" "$W" 1.0.0
+    assert_status 0
+    grep -q "@$W # v1.0.0 pkg-pages self-pin" "$R/.github/workflows/publish.yml"
+    git -C "$R" commit -qam 'chore(release): pin'
+    # dev/ is not shipped, so removing the script doesn't change what callers run.
+    run "$ROOT/dev/self-pin.sh" -C "$R" --check HEAD
+    assert_status 0
+    run "$ROOT/dev/self-pin.sh" -C "$TMP/none" --check
+    assert_status 1
+}

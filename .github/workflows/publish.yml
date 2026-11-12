@@ -190,9 +190,13 @@ jobs:
       has-deb: ${{ steps.collect.outputs.has-deb }}
       has-rpm: ${{ steps.collect.outputs.has-rpm }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Only the public key: none of the caller's code is present in this job.
+      - name: Checkout the public key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          sparse-checkout: /${{ inputs.public-key }}
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Fetch the .deb artifacts
@@ -300,9 +304,13 @@ jobs:
             *) echo "::error::install-tests: kind must be deb or rpm, not '${KIND}'"; exit 1 ;;
           esac
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Only the public key: none of the caller's code is present in this job.
+      - name: Checkout the public key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          sparse-checkout: /${{ inputs.public-key }}
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Fetch the packages
@@ -335,9 +343,13 @@ jobs:
       fingerprint: ${{ steps.build.outputs.fingerprint }}
       site-id: ${{ steps.build.outputs.artifact-id }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Only the public key: none of the caller's code is present in this job.
+      - name: Checkout the public key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          sparse-checkout: /${{ inputs.public-key }}
+          sparse-checkout-cone-mode: false
           persist-credentials: false
 
       - name: Fetch the .deb files
