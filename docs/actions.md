@@ -55,8 +55,9 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    `all`/`noarch` packages they are `amd64 arm64` and `x86_64 aarch64`.
 8. It writes `<name>.asc` (the pin itself, revocations included), `deb/<name>.list`,
    `rpm/<name>.repo`, the landing page (install commands for every package of `version`, and
-   every caller string HTML-escaped), `.nojekyll` and the directory listings. Then it merges
-   `extra-site`, which may not overwrite a file of the site or contain symbolic links.
+   every caller string HTML-escaped), `.nojekyll`, directory listings and, by default, a footer
+   linking to pkg-pages (`footer: false` opts out). Then it merges `extra-site`, which may not
+   overwrite a file of the site or contain symbolic links.
 9. Self-check: the required files exist, each required Debian architecture's `Packages` lists
    `version`, and, when signed, `InRelease`, `Release.gpg`, every `repomd.xml.asc` and every
    `.rpm` verify against the pin.
@@ -169,7 +170,8 @@ versions against the crate. See [building.md](building.md). Its output paths are
    runs the caller's `smoke` command, so it holds no secret and checks out nothing.
    `install-tests: '[]'` skips the job.
 3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
-   skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`.
+   skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`. The `footer` input
+   controls the small pkg-pages footer (default true).
 4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
    (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Merges
    `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.
@@ -219,6 +221,7 @@ packages:
     deb-architectures: amd64 arm64
     rpm-architectures: x86_64 aarch64
     description: What these packages are, in one line
+    footer: true
     install-tests: >-
       [{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"},
        {"distro":"ubuntu","arch":"x86_64"},{"distro":"fedora","arch":"aarch64"},

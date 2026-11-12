@@ -221,6 +221,21 @@ apt_only() {
     done
 }
 
+@test "footer is published by default and can be disabled" {
+    need_deb
+    pkgs deb
+    build
+    assert_status 0
+    grep -q 'ziptie-soft/pkg-pages' "$TMP/site/index.html"
+    grep -q 'pkg-pages</a> 1.0.0' "$TMP/site/index.html"
+    grep -q 'ziptie-soft/pkg-pages' "$TMP/site/deb/index.html"
+    rm -rf "$TMP/site"
+    build --footer false
+    assert_status 0
+    refute grep -q '<footer' "$TMP/site/index.html"
+    refute grep -q '<footer' "$TMP/site/deb/index.html"
+}
+
 # --- Versions and inputs ---------------------------------------------------------------------
 
 @test "fails when the release version is not among the packages" {
@@ -294,6 +309,7 @@ apt_only() {
     v --base-url https://x --name Hello
     v --base-url https://x --name hello --suite 'a b'
     v --base-url https://x --name hello --directory-listings yes
+    v --base-url https://x --name hello --footer yes
     v --base-url https://x --name hello --homepage 'javascript:alert(1)'
     v --base-url https://x --name hello --deb-architectures 'amd64 ../x'
     v --base-url https://x --name hello --extra-site "$TMP/none"

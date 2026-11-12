@@ -57,6 +57,11 @@ on:
         required: false
         type: string
         default: ''
+      footer:
+        description: Add a small footer linking to pkg-pages to the landing page and listings.
+        required: false
+        type: boolean
+        default: true
       suite:
         required: false
         type: string
@@ -416,6 +421,7 @@ jobs:
           description: ${{ inputs.description }}
           homepage: ${{ inputs.homepage }}
           base-url: ${{ inputs.base-url }}
+          footer: ${{ inputs.footer }}
           suite: ${{ inputs.suite }}
           component: ${{ inputs.component }}
           deb-architectures: ${{ inputs.deb-architectures }}

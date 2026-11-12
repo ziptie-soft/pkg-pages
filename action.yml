@@ -80,6 +80,10 @@ inputs:
     description: Write an index.html into every directory (Pages serves no listings of its own).
     required: false
     default: 'true'
+  footer:
+    description: Add a small footer linking to pkg-pages to the landing page and directory listings.
+    required: false
+    default: 'true'
   extra-site:
     description: Optional directory merged into the site root (docs, badges); it may not overwrite repository files.
     required: false
@@ -142,6 +146,7 @@ runs:
         INPUT_RPM_ARCHITECTURES: ${{ inputs.rpm-architectures }}
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
         INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
+        INPUT_FOOTER: ${{ inputs.footer }}
         INPUT_EXTRA_SITE: ${{ inputs.extra-site }}
         INPUT_OUT: ${{ inputs.out }}
         INPUT_UPLOAD: ${{ inputs.upload }}
