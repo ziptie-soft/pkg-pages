@@ -43,7 +43,8 @@ jobs:
           tests/fixtures.sh deb out/deb pptest-data 1.0.0 all
           tests/fixtures.sh rpm out/rpm pptest 1.0.0 x86_64
           tests/fixtures.sh rpm out/rpm pptest-data 1.0.0 noarch
-          tar -czf out/deb/pptest-1.0.0-linux-x86_64.tar.gz -C out/deb .
+          tar -czf out/pptest-1.0.0-linux-x86_64.tar.gz -C out/deb .
+          mv out/pptest-1.0.0-linux-x86_64.tar.gz out/deb/
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
