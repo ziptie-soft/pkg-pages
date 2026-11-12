@@ -210,6 +210,17 @@ apt_only() {
     [ -e "$TMP/site/index.html" ]
 }
 
+@test "landing page and directory listings use local theme assets only" {
+    need_deb
+    pkgs deb
+    build
+    for page in "$TMP/site/index.html" "$TMP/site/deb/index.html"; do
+        refute grep -Eq '<(link|script)[^>]*(src|href)=' "$page"
+        grep -q 'data-theme' "$page"
+        grep -q 'prefers-color-scheme' "$page"
+    done
+}
+
 # --- Versions and inputs ---------------------------------------------------------------------
 
 @test "fails when the release version is not among the packages" {
@@ -302,7 +313,8 @@ apt_only() {
     build --title 'Hi <script>alert(1)</script>' --description 'a "b" & <c>' --homepage 'https://example.com/?a=1&b=2'
     assert_status 0
     i="$TMP/site/index.html"
-    refute grep -q '<script>' "$i"
+    refute grep -q 'Hi <script>' "$i"
+    refute grep -q 'alert(1)</script>' "$i"
     grep -q 'Hi &lt;script&gt;' "$i"
     grep -q 'a &quot;b&quot; &amp; &lt;c&gt;' "$i"
     grep -q 'href="https://example.com/?a=1&amp;b=2"' "$i"

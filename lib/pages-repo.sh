@@ -264,6 +264,129 @@ fi
 # --- The landing page ------------------------------------------------------------------------
 # Every caller-provided string is HTML-escaped. The install commands name the packages of VERSION.
 esc() { printf '%s' "$1" | html_escape; }
+page_head() {
+    printf '<!doctype html>\n<html lang="en">\n  <head>\n'
+    printf '    <meta charset="utf-8">\n'
+    printf '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+    printf '    <meta name="color-scheme" content="light dark">\n'
+    printf '    <title>%s</title>\n' "$1"
+    cat <<'CSS'
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f8fafc; --fg: #18212f; --muted: #536174; --border: #d7dee8;
+        --surface: #fff; --code: #eef2f7; --accent: #175cd3; --accent-fg: #fff;
+        --signed-fg: #166534; --signed-bg: #dcfce7; --signed-border: #86efac;
+        --unsigned-fg: #854d0e; --unsigned-bg: #fef3c7; --unsigned-border: #fbbf24;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme=light]) {
+          --bg: #111827; --fg: #e5eaf2; --muted: #aab6c7; --border: #344154;
+          --surface: #1b2636; --code: #121c2a; --accent: #8ab4ff; --accent-fg: #101827;
+          --signed-fg: #86efac; --signed-bg: #14532d; --signed-border: #4ade80;
+          --unsigned-fg: #fde68a; --unsigned-bg: #78350f; --unsigned-border: #fbbf24;
+        }
+      }
+      :root[data-theme=dark] {
+        --bg: #111827; --fg: #e5eaf2; --muted: #aab6c7; --border: #344154;
+        --surface: #1b2636; --code: #121c2a; --accent: #8ab4ff; --accent-fg: #101827;
+        --signed-fg: #86efac; --signed-bg: #14532d; --signed-border: #4ade80;
+        --unsigned-fg: #fde68a; --unsigned-bg: #78350f; --unsigned-border: #fbbf24;
+      }
+      * { box-sizing: border-box; }
+      body {
+        max-width: 48rem; margin: 0 auto; padding: 2rem 1.25rem;
+        background: var(--bg); color: var(--fg);
+        font: 1rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      a { color: var(--accent); }
+      a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+      button { font: inherit; }
+      .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+      h1 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.25rem); line-height: 1.2; }
+      .theme, .badge, .browse a {
+        border: 1px solid var(--border); border-radius: 999px;
+        background: var(--surface); color: var(--fg); padding: .3rem .7rem;
+      }
+      .theme { cursor: pointer; white-space: nowrap; }
+      .theme, .copy { display: none; }
+      .js .theme, .js .copy { display: inline-block; }
+      .intro { margin: .65rem 0 0; color: var(--muted); }
+      .badges { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0 1.4rem; }
+      .badge { font-size: .85rem; text-decoration: none; }
+      .signed { color: var(--signed-fg); background: var(--signed-bg); border-color: var(--signed-border); }
+      .unsigned { color: var(--unsigned-fg); background: var(--unsigned-bg); border-color: var(--unsigned-border); }
+      h2 { margin: 1.5rem 0 .6rem; font-size: 1.2rem; }
+      .card { padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+      .card + .card { margin-top: 1rem; }
+      .card-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+      .card h2 { margin: 0; }
+      .cmd { margin: .75rem 0 0; }
+      pre {
+        margin: 0; padding: 1rem; overflow-x: auto;
+        border: 1px solid var(--border); border-radius: 8px; background: var(--code);
+        font: .88rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .copy { cursor: pointer; }
+      code { word-break: break-all; }
+      .fpr {
+        display: block; margin: .5rem 0 1.25rem; padding: .75rem 1rem;
+        border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+        font: .9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      .browse { display: flex; flex-wrap: wrap; gap: .5rem; }
+      .browse a { text-decoration: none; font-size: .9rem; }
+      .browse-row { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+      .listing { list-style: none; margin: .75rem 0 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+      .listing li + li { border-top: 1px solid var(--border); }
+      .listing a { display: block; padding: .55rem .8rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-decoration: none; }
+      .listing a:hover, .browse a:hover { background: var(--code); }
+      @media (prefers-reduced-motion: no-preference) {
+        a, button { transition: background-color .12s ease, color .12s ease; }
+      }
+    </style>
+    <script>
+      (function () {
+        var key = 'pkg-pages-theme';
+        var mode = 'auto';
+        try { mode = localStorage.getItem(key) || 'auto'; } catch (_) {}
+        if (mode !== 'light' && mode !== 'dark') mode = 'auto';
+        document.documentElement.classList.add('js');
+        function apply() {
+          if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+          else document.documentElement.dataset.theme = mode;
+        }
+        apply();
+        document.addEventListener('DOMContentLoaded', function () {
+          var theme = document.getElementById('theme');
+          function label() {
+            theme.textContent = mode === 'auto' ? '◐ Auto' : mode === 'light' ? '☀ Light' : '☾ Dark';
+            theme.setAttribute('aria-label', 'Theme: ' + mode + '. Activate to change theme.');
+          }
+          theme.addEventListener('click', function () {
+            mode = mode === 'auto' ? 'light' : mode === 'light' ? 'dark' : 'auto';
+            apply(); label();
+            try { localStorage.setItem(key, mode); } catch (_) {}
+          });
+          label();
+          document.querySelectorAll('.card').forEach(function (card) {
+            var button = card.querySelector('.copy');
+            var pre = card.querySelector('.cmd pre');
+            if (!navigator.clipboard || !button || !pre) { if (button) button.hidden = true; return; }
+            button.addEventListener('click', function () {
+              navigator.clipboard.writeText(pre.textContent).then(function () {
+                button.textContent = 'Copied';
+                setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+              }).catch(function () {});
+            });
+          });
+        });
+      })();
+    </script>
+  </head>
+  <body>
+CSS
+}
 names="$(while IFS='	' read -r k n v _a _s _p; do
     pkg_matches_version "$k" "$v" "$version" && printf '%s\n' "$n"
 done < "$index" | LC_ALL=C sort -u | tr '\n' ' ')"
@@ -273,37 +396,42 @@ h_name="$(esc "$name")"
 h_base="$(esc "$base_url")"
 h_names="$(esc "$names")"
 {
-    printf '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8">\n'
-    printf '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
-    printf '    <title>%s</title>\n  </head>\n  <body>\n    <h1>%s</h1>\n' "$h_title" "$h_title"
-    [ -z "$description" ] || printf '    <p>%s</p>\n' "$(esc "$description")"
-    printf '    <p>Latest version: %s.' "$(esc "$version")"
-    [ -z "$homepage" ] || printf ' Project: <a href="%s">%s</a>.' "$(esc "$homepage")" "$(esc "$homepage")"
-    printf '</p>\n'
+    page_head "$h_title"
+    printf '    <header>\n      <div class="top"><h1>%s</h1><button type="button" id="theme" class="theme" aria-label="Change theme">◐ Auto</button></div>\n' "$h_title"
+    [ -z "$description" ] || printf '      <p class="intro">%s</p>\n' "$(esc "$description")"
+    printf '      <div class="badges"><span class="badge">v%s</span>' "$(esc "$version")"
     if [ -n "$fpr" ]; then
-        printf '    <p>Packages and repository metadata are signed with <a href="%s.asc">%s.asc</a>\n' "$h_name" "$h_name"
-        printf '    (fingerprint <code>%s</code>).</p>\n' "$fpr"
+        printf '<span class="badge signed">signed</span>'
+    else
+        printf '<span class="badge unsigned">unsigned</span>'
+    fi
+    [ -z "$homepage" ] || printf '<a class="badge" href="%s">%s</a>' "$(esc "$homepage")" "$(esc "$homepage")"
+    printf '</div>\n    </header>\n'
+    if [ -n "$fpr" ]; then
+        printf '    <p>Packages and repository metadata are signed with <a href="%s.asc">%s.asc</a>.</p>\n' "$h_name" "$h_name"
+        printf '    <p>Fingerprint:</p>\n    <code class="fpr">%s</code>\n' "$fpr"
     else
         printf '    <p>These repositories are unsigned.</p>\n'
     fi
     if [ "$has_rpm" = true ]; then
-        printf '    <h2>DNF (Fedora, RHEL)</h2>\n'
-        printf '    <pre>sudo curl -fsSLo /etc/yum.repos.d/%s.repo %s/rpm/%s.repo\n' "$h_name" "$h_base" "$h_name"
-        printf 'sudo dnf install %s</pre>\n' "$h_names"
+        printf '    <section class="card">\n      <div class="card-head"><h2>DNF (Fedora, RHEL)</h2><button type="button" class="copy">Copy</button></div>\n'
+        printf '      <div class="cmd"><pre>sudo curl -fsSLo /etc/yum.repos.d/%s.repo %s/rpm/%s.repo\nsudo dnf install %s</pre></div>\n' "$h_name" "$h_base" "$h_name" "$h_names"
+        printf '    </section>\n'
     fi
     if [ "$has_deb" = true ]; then
-        printf '    <h2>APT (Debian, Ubuntu)</h2>\n    <pre>'
+        printf '    <section class="card">\n      <div class="card-head"><h2>APT (Debian, Ubuntu)</h2><button type="button" class="copy">Copy</button></div>\n      <div class="cmd"><pre>'
         if [ -n "$fpr" ]; then
             printf 'sudo install -d -m 0755 /etc/apt/keyrings\n'
             printf 'sudo curl -fsSLo /etc/apt/keyrings/%s.asc %s/%s.asc\n' "$h_name" "$h_base" "$h_name"
         fi
         printf 'sudo curl -fsSLo /etc/apt/sources.list.d/%s.list %s/deb/%s.list\n' "$h_name" "$h_base" "$h_name"
-        printf 'sudo apt update\nsudo apt install %s</pre>\n' "$h_names"
+        printf 'sudo apt update\nsudo apt install %s</pre></div>\n' "$h_names"
+        printf '    </section>\n'
     fi
-    printf '    <p>Browse:'
-    [ "$has_rpm" = false ] || printf ' <a href="rpm/">rpm/</a>'
-    [ "$has_deb" = false ] || printf ' <a href="deb/">deb/</a>'
-    printf '</p>\n  </body>\n</html>\n'
+    printf '    <div class="browse-row"><span>Browse:</span><nav class="browse" aria-label="Browse repositories">'
+    [ "$has_rpm" = false ] || printf '<a href="rpm/">rpm/</a>'
+    [ "$has_deb" = false ] || printf '<a href="deb/">deb/</a>'
+    printf '</nav></div>\n  </body>\n</html>\n'
 } > "$out/index.html"
 : > "$out/.nojekyll"
 
@@ -324,10 +452,9 @@ if [ "$listings" = true ]; then
         [ ! -e "$dir/index.html" ] || continue
         rel="$(esc "${dir#"$out"/}")"
         {
-            printf '<!doctype html>\n<html lang="en">\n  <head>\n    <meta charset="utf-8">\n'
-            printf '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
-            printf '    <title>Index of /%s/</title>\n  </head>\n  <body>\n' "$rel"
-            printf '    <h1>Index of /%s/</h1>\n    <ul>\n      <li><a href="../">../</a></li>\n' "$rel"
+            page_head "Index of /$rel/"
+            printf '    <header><div class="top"><h1>Index of /%s/</h1><button type="button" id="theme" class="theme" aria-label="Change theme">◐ Auto</button></div></header>\n' "$rel"
+            printf '    <ul class="listing">\n      <li><a href="../">../</a></li>\n'
             for entry in "$dir"/*; do
                 [ -e "$entry" ] || continue
                 e="${entry##*/}"
