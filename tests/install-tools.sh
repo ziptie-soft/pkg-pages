@@ -7,11 +7,11 @@ if command -v apt-get > /dev/null; then
     apt-get update -qq
     # rpm brings rpmbuild, rpmsign and rpmkeys on Debian and Ubuntu.
     apt-get install -y -qq --no-install-recommends \
-        bats ca-certificates gnupg gpgv apt-utils createrepo-c rpm dpkg-dev > /dev/null
+        bats ca-certificates git gnupg gpgv apt-utils createrepo-c rpm dpkg-dev > /dev/null
 elif command -v dnf > /dev/null; then
     # dnf5 prints progress even with -q; show it only when the install fails. (No `set --`:
     # this file is sourced, and the caller's arguments must survive.)
-    _pkgs='bats gnupg2 rpm-sign rpm-build createrepo_c dpkg findutils diffutils'
+    _pkgs='bats git-core gnupg2 rpm-sign rpm-build createrepo_c dpkg findutils diffutils'
     # shellcheck disable=SC2086 # a list of package names
     dnf install -y -q $_pkgs > /dev/null 2>&1 || dnf install -y $_pkgs
 else
