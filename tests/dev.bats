@@ -117,3 +117,95 @@ wf() {
     run "$ROOT/dev/check-self-refs.sh" "$TMP/action.yml"
     assert_status 0
 }
+
+# --- self-pin.sh -----------------------------------------------------------------------------
+
+# selfpin_repo: a throwaway repository with an action, lib/ and a publish.yml pinned to its
+# first commit W ($W); the script runs from its own copy there.
+selfpin_repo() {
+    need git
+    R="$TMP/repo"
+    mkdir -p "$R/dev" "$R/lib" "$R/sign-rpm" "$R/.github/workflows"
+    cp "$ROOT/dev/self-pin.sh" "$R/dev/"
+    cd "$R" || return 1
+    git init -q
+    git config user.email t@example.invalid
+    git config user.name t
+    echo 'runs: { using: composite, steps: [] }' > action.yml
+    echo 'runs: { using: composite, steps: [] }' > sign-rpm/action.yml
+    echo 'echo hi' > lib/x.sh
+    echo 'X=1' > images.env
+    printf 'jobs:\n  a:\n    steps:\n      - uses: ziptie-soft/pkg-pages/sign-rpm@%s # v0.0.0 pkg-pages self-pin\n      - uses: ziptie-soft/pkg-pages@%s # v0.0.0 pkg-pages self-pin\n' \
+        "$(printf '%040d' 0)" "$(printf '%040d' 0)" > .github/workflows/publish.yml
+    git add -A
+    git commit -qm 'feat: w'
+    W="$(git rev-parse HEAD)"
+}
+
+@test "self-pin: rewrites every marked self reference" {
+    selfpin_repo
+    run dev/self-pin.sh "$W" 1.2.3
+    assert_status 0
+    [ "$(grep -c "@$W # v1.2.3 pkg-pages self-pin\$" .github/workflows/publish.yml)" -eq 2 ]
+}
+
+@test "self-pin: refuses a short SHA, a bad version and an unmarked self reference" {
+    selfpin_repo
+    run dev/self-pin.sh abc123 1.2.3;  assert_status 1
+    run dev/self-pin.sh "$W" v1.2;     assert_status 1
+    echo "      - uses: ziptie-soft/pkg-pages/check-rpm@$W" >> .github/workflows/publish.yml
+    run dev/self-pin.sh "$W" 1.2.3
+    assert_status 1
+    assert_output_contains "lack the"
+}
+
+@test "self-pin --check: passes when only publish.yml and docs changed since W" {
+    selfpin_repo
+    dev/self-pin.sh "$W" 1.0.0 > /dev/null
+    echo docs > README.md
+    git add -A
+    git commit -qm 'chore(release): pin'
+    run dev/self-pin.sh --check
+    assert_status 0
+    assert_output_contains "uses $W"
+}
+
+@test "self-pin --check: fails when lib/, an action or images.env changed since W" {
+    for f in lib/x.sh sign-rpm/action.yml images.env; do
+        rm -rf "$TMP/repo"
+        selfpin_repo
+        dev/self-pin.sh "$W" 1.0.0 > /dev/null
+        echo changed >> "$f"
+        git add -A
+        git commit -qm 'fix: change'
+        run dev/self-pin.sh --check
+        assert_status 1
+        assert_output_contains "the actions changed"
+    done
+}
+
+@test "self-pin --check: fails on a new action added after W" {
+    selfpin_repo
+    dev/self-pin.sh "$W" 1.0.0 > /dev/null
+    mkdir new-action
+    echo 'runs: { using: composite, steps: [] }' > new-action/action.yml
+    git add -A
+    git commit -qm 'feat: new'
+    run dev/self-pin.sh --check
+    assert_status 1
+}
+
+@test "self-pin --check: fails on stale, mixed or unknown pins" {
+    selfpin_repo
+    git add -A
+    run dev/self-pin.sh --check
+    assert_status 1
+    assert_output_contains "not in this repository"
+    dev/self-pin.sh "$W" 1.0.0 > /dev/null
+    sed -i "0,/@$W/s//@$(printf '%040d' 1)/" .github/workflows/publish.yml
+    git add -A
+    git commit -qm 'chore: mixed'
+    run dev/self-pin.sh --check
+    assert_status 1
+    assert_output_contains "several commits"
+}

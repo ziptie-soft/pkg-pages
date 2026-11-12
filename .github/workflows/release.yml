@@ -3,8 +3,12 @@ name: Release
 # release-please keeps one release PR (conventional commits decide the bump). Merging it tags
 # vX.Y.Z and creates the GitHub release. Callers pin that tag's commit SHA.
 #
-# Not yet here (docs/releasing.md): the self-pin step that rewrites the reusable workflow's own
-# `ziptie-soft/pkg-pages/<action>@<sha>` references before the tag, and the floating vX tag.
+# The self-pin (docs/releasing.md#the-self-pin): publish.yml can't call its own commit's actions,
+# so after release-please updates its PR, `self-pin` adds a commit to that PR pointing
+# publish.yml's `ziptie-soft/pkg-pages/<action>@<sha>` references at the master commit the PR is
+# based on (W). Merging the PR (rebase) puts the release and pin commits on top of W, and the tag
+# X then calls actions@W, which are identical to X's own. `check-release` verifies that on the
+# tagged commit.
 on:
   push:
     branches: [master]
@@ -22,12 +26,94 @@ jobs:
     if: ${{ github.repository_owner == 'ziptie-soft' }}
     runs-on: ubuntu-slim
     timeout-minutes: 10
-    permissions:
-      contents: write # the release commit, tag and GitHub release
-      issues: write # release-please labels
-      pull-requests: write # the release PR
+    environment: release
+    permissions: {}
+    outputs:
+      release-created: ${{ steps.rp.outputs.release_created }}
+      sha: ${{ steps.rp.outputs.sha }}
+      pr-branch: ${{ steps.rp.outputs.pr && fromJSON(steps.rp.outputs.pr).headBranchName || '' }}
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - name: Release app token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write # the release commit, tag and GitHub release
+          permission-issues: write # release-please labels
+          permission-pull-requests: write # the release PR
+
+      - id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  self-pin:
+    name: Pin publish.yml in the release PR
+    needs: release-please
+    if: ${{ needs.release-please.outputs.pr-branch != '' && needs.release-please.outputs.release-created != 'true' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    environment: release
+    permissions:
+      contents: read # checkout
+    steps:
+      - name: Release app token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write # push the pin commit to the release PR branch
+          permission-workflows: write # the pin commit changes .github/workflows/publish.yml
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.pr-branch }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Pin publish.yml to the commit the release is based on
+        shell: bash
+        env:
+          W: ${{ github.sha }}
+          BRANCH: ${{ needs.release-please.outputs.pr-branch }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "${W}" HEAD ||
+            { echo "::error::the release PR branch is not based on ${W}"; exit 1; }
+          version="$(sed -n 's/^ *"\.": *"\([0-9.]*\)".*/\1/p' .release-please-manifest.json)"
+          dev/self-pin.sh "${W}" "${version}"
+          if git diff --quiet; then
+            echo "publish.yml already points at ${W}"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -qam "chore(release): pin publish.yml to ${W:0:12}"
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          fi
+          dev/self-pin.sh --check HEAD
+
+  # The guarantee callers rely on, checked on the tagged commit. A failure here means the release
+  # must be replaced (a fix release); the tag itself is immutable.
+  check-release:
+    name: Check the released publish.yml
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release-created == 'true' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the self-pin
+        shell: bash
+        run: dev/self-pin.sh --check HEAD

@@ -31,11 +31,13 @@ fetch-history/             calls lib/action.sh
 install-test/
 package-rust/
 .github/workflows/
-  publish.yml            the reusable workflow (interface only for now)
-  ci.yml ...             this repository's own CI
+  publish.yml            the reusable workflow
+  ci.yml                 lint, the bats suite in containers, every action end to end
+  selftest.yml           publish.yml called as callers call it
+  release.yml            release-please and the self-pin (docs/releasing.md)
 lib/                     the POSIX sh scripts the actions run (lib/README.md)
 tools/ci-key             a maintainer CLI, never run in CI
-dev/                     repository tooling: the pin gate, the self-ref check
+dev/                     repository tooling: the pin gate, the self-ref check, self-pin.sh
 tests/                   bats tests and their fixtures (tests/README.md)
 images.env               the container images, pinned by digest
 docs/                    design, contracts, signing, building, releasing
@@ -52,7 +54,9 @@ These keep the actions safe for every caller. CI enforces most of them.
 
 - **No `uses: ./…` in shipped code.** In a composite action or a called workflow it resolves in
   the caller's checkout. Reach files through `$GITHUB_ACTION_PATH`, and sibling actions as
-  `ziptie-soft/pkg-pages/<action>@<sha>` ([docs/releasing.md](docs/releasing.md#the-self-pin)).
+  `ziptie-soft/pkg-pages/<action>@<sha> # vX.Y.Z pkg-pages self-pin`. Don't edit those pins by
+  hand: `release.yml` moves them at each release ([docs/releasing.md](docs/releasing.md#the-self-pin)).
+  A change to an action reaches `publish.yml` only with the next release.
 - **Inputs are untrusted.** Never put `${{ inputs.* }}` in a `run:` block: pass inputs through
   `env:` as `INPUT_<NAME>`, and validate them in `lib/action.sh` or the script (paths relative and
   without `..`, URLs `https://` or `file:///`, names `[a-z0-9][a-z0-9.+-]*`).
