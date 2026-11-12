@@ -13,7 +13,7 @@ fixed version's tag and SHA.
 
 ## Supported versions
 
-Only the latest release gets security fixes. Before v1.0.0, a fix may come with a breaking change.
+Only the latest release gets security fixes.
 
 ## Scope
 
