@@ -1,8 +1,11 @@
 # The turnkey path: sign → install test → fetch history → build repo → deploy to GitHub Pages,
-# as one reusable workflow. Contract: docs/actions.md#publish-reusable-workflow.
-# Status: interface only; it fails until its jobs are implemented. The jobs it will hold are in
-# docs/design.md#jobs-of-the-reusable-workflow; each uses this repository's actions as
-# ziptie-soft/pkg-pages/<action>@<sha>, never ./<action> (dev/check-self-refs.sh).
+# as one reusable workflow. Contract: docs/actions.md#publish-reusable-workflow; the jobs are
+# described in docs/design.md#jobs-of-the-reusable-workflow.
+#
+# It calls this repository's own actions as ziptie-soft/pkg-pages/<action>@<sha>, never
+# ./<action>, which would resolve in the caller's checkout (dev/check-self-refs.sh). The lines
+# marked `# vX.Y.Z pkg-pages self-pin` are rewritten by dev/self-pin.sh at each release
+# (docs/releasing.md#the-self-pin); edit them only through it.
 name: Publish packages
 
 on:
@@ -16,6 +19,13 @@ on:
         description: The release tag; skipped by fetch-history, compared by skip-if-newer.
         required: true
         type: string
+      ref:
+        description: >-
+          Commit, branch or tag of the caller's repository to read public-key from (empty: the
+          commit of the calling run).
+        required: false
+        type: string
+        default: ''
       deb-artifacts:
         description: download-artifact pattern of this run's .deb artifacts (empty for none).
         required: false
@@ -71,11 +81,13 @@ on:
       signing-environment:
         description: >-
           GitHub environment of the caller's repository holding the signing secret, used by the
-          sign and build jobs only. Restrict it to the default branch.
+          sign and repo jobs only. Restrict it to the default branch. Empty: those jobs run
+          without an environment (unsigned projects, or a key kept elsewhere).
         required: false
         type: string
         default: linux-signing
       keep-releases:
+        description: How many earlier releases' packages the repositories keep (0 = only this one).
         required: false
         type: number
         default: 9
@@ -88,7 +100,8 @@ on:
       install-tests:
         description: >-
           JSON list of {"distro": "fedora|debian|ubuntu|<image@digest>", "arch":
-          "x86_64|aarch64"} to install-test on; [] for none.
+          "x86_64|aarch64", "kind": "deb|rpm"} to install-test on; [] for none. kind defaults to
+          rpm for fedora and deb otherwise; aarch64 runs on ubuntu-24.04-arm.
         required: false
         type: string
         default: '[{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"},{"distro":"ubuntu","arch":"x86_64"}]'
@@ -112,10 +125,24 @@ on:
         type: boolean
         default: true
       extra-artifact-ids:
-        description: Comma-separated artifact IDs merged into the site root before deploying.
+        description: >-
+          Comma-separated IDs of artifacts of the calling run whose files are merged into the
+          site root before deploying (a badge, docs). They may not overwrite a site file.
         required: false
         type: string
         default: ''
+      artifact-prefix:
+        description: >-
+          Prefix of the names of the artifacts this workflow uploads (<prefix>-deb, -rpm, -site,
+          -pages-<attempt>). Change it when one run calls publish.yml more than once.
+        required: false
+        type: string
+        default: pkg-pages
+      retention-days:
+        description: Retention of the artifacts this workflow uploads (re-runs need them).
+        required: false
+        type: number
+        default: 7
     secrets:
       signing-key:
         description: >-
@@ -125,33 +152,334 @@ on:
     outputs:
       signed:
         description: "'true' when packages and repositories were signed."
-        value: ${{ jobs.not-implemented.outputs.signed }}
+        value: ${{ jobs.repo.outputs.signed }}
+      fingerprint:
+        description: Primary key fingerprint of the pin, when signed.
+        value: ${{ jobs.repo.outputs.fingerprint }}
       signed-rpm-artifact-id:
-        description: Artifact ID of the signed .rpm files; attach these to the release, not the unsigned ones.
-        value: ${{ jobs.not-implemented.outputs.signed-rpm-artifact-id }}
+        description: >-
+          Artifact ID of the .rpm files after signing (unsigned when the project doesn't sign);
+          attach these to the release, not the build's copies.
+        value: ${{ jobs.sign.outputs.rpm-id }}
+      deb-artifact-id:
+        description: Artifact ID of the .deb files that were published.
+        value: ${{ jobs.sign.outputs.deb-id }}
       site-artifact-id:
-        description: Artifact ID of the Pages site.
-        value: ${{ jobs.not-implemented.outputs.site-artifact-id }}
+        description: Artifact ID of the Pages site (an upload-pages-artifact tarball).
+        value: ${{ jobs.repo.outputs.site-id }}
       page-url:
-        description: URL of the deployed site, when deployed.
-        value: ${{ jobs.not-implemented.outputs.page-url }}
+        description: URL of the deployed site; empty when not deployed.
+        value: ${{ jobs.deploy.outputs.page-url }}
 
 permissions: {}
 
 jobs:
-  not-implemented:
-    name: Not implemented yet
+  # Collects this run's packages (only .deb and .rpm files; artifacts may hold tarballs too),
+  # signs the .rpm files, and re-uploads both sets as one artifact each, passed on by ID. Holds
+  # the key, so it only runs pkg-pages' own scripts: nothing of the caller's is executed.
+  sign:
+    name: Sign the packages
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions: {}
+    timeout-minutes: 15
+    environment: ${{ inputs.signing-environment }}
+    permissions:
+      contents: read # checkout, for the public key
     outputs:
-      signed: ''
-      signed-rpm-artifact-id: ''
-      site-artifact-id: ''
-      page-url: ''
+      deb-id: ${{ steps.deb.outputs.artifact-id }}
+      rpm-id: ${{ steps.rpm.outputs.artifact-id }}
+      has-deb: ${{ steps.collect.outputs.has-deb }}
+      has-rpm: ${{ steps.collect.outputs.has-rpm }}
     steps:
-      - name: Fail
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Fetch the .deb artifacts
+        if: ${{ inputs.deb-artifacts != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.deb-artifacts }}
+          path: ${{ runner.temp }}/in/deb
+          merge-multiple: true
+
+      - name: Fetch the .rpm artifacts
+        if: ${{ inputs.rpm-artifacts != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.rpm-artifacts }}
+          path: ${{ runner.temp }}/in/rpm
+          merge-multiple: true
+
+      - name: Collect the packages
+        id: collect
+        shell: bash
+        env:
+          DEB_ARTIFACTS: ${{ inputs.deb-artifacts }}
+          RPM_ARTIFACTS: ${{ inputs.rpm-artifacts }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg-pages/deb pkg-pages/rpm "${RUNNER_TEMP}/in/deb" "${RUNNER_TEMP}/in/rpm"
+          find "${RUNNER_TEMP}/in/deb" -type f -name '*.deb' -exec cp -t pkg-pages/deb {} +
+          find "${RUNNER_TEMP}/in/rpm" -type f -name '*.rpm' -exec cp -t pkg-pages/rpm {} +
+          n_deb="$(find pkg-pages/deb -type f | wc -l)"
+          n_rpm="$(find pkg-pages/rpm -type f | wc -l)"
+          if [ -n "${DEB_ARTIFACTS}" ] && [ "${n_deb}" -eq 0 ]; then
+            echo "::error::no .deb file in the artifacts matching '${DEB_ARTIFACTS}'"
+            exit 1
+          fi
+          if [ -n "${RPM_ARTIFACTS}" ] && [ "${n_rpm}" -eq 0 ]; then
+            echo "::error::no .rpm file in the artifacts matching '${RPM_ARTIFACTS}'"
+            exit 1
+          fi
+          if [ "${n_deb}" -eq 0 ] && [ "${n_rpm}" -eq 0 ]; then
+            echo "::error::set deb-artifacts and/or rpm-artifacts"
+            exit 1
+          fi
+          echo "has-deb=$([ "${n_deb}" -gt 0 ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
+          echo "has-rpm=$([ "${n_rpm}" -gt 0 ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
+          ls -l pkg-pages/deb pkg-pages/rpm
+
+      - name: Sign the .rpm files
+        if: ${{ steps.collect.outputs.has-rpm == 'true' }}
+        uses: ziptie-soft/pkg-pages/sign-rpm@924f21ed7d0f513ee2f4addd330e5f444bef866c # v0.0.0 pkg-pages self-pin
+        with:
+          packages: pkg-pages/rpm/*.rpm
+          public-key: ${{ inputs.public-key }}
+          signing-key: ${{ secrets.signing-key }}
+
+      - name: Keep the .deb files
+        id: deb
+        if: ${{ steps.collect.outputs.has-deb == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-deb
+          path: pkg-pages/deb/*.deb
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Keep the .rpm files
+        id: rpm
+        if: ${{ steps.collect.outputs.has-rpm == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-rpm
+          path: pkg-pages/rpm/*.rpm
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+  # Installs the packages about to be published on clean systems, as users would, and runs the
+  # caller's smoke command. No secret exists in this job.
+  verify:
+    name: Install test (${{ matrix.distro }}, ${{ matrix.arch }})
+    needs: sign
+    if: ${{ inputs.install-tests != '[]' && inputs.install-tests != '' }}
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout, for the public key
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.install-tests) }}
+    env:
+      KIND: ${{ matrix.kind || (matrix.distro == 'fedora' && 'rpm' || 'deb') }}
+    steps:
+      - name: Check the test
+        shell: bash
+        env:
+          HAS_DEB: ${{ needs.sign.outputs.has-deb }}
+          HAS_RPM: ${{ needs.sign.outputs.has-rpm }}
+        run: |
+          set -euo pipefail
+          case "${KIND}" in
+            deb) [ "${HAS_DEB}" = true ] || { echo "::error::install-tests asks for a .deb test, but there are no .deb files"; exit 1; } ;;
+            rpm) [ "${HAS_RPM}" = true ] || { echo "::error::install-tests asks for an .rpm test, but there are no .rpm files"; exit 1; } ;;
+            *) echo "::error::install-tests: kind must be deb or rpm, not '${KIND}'"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Fetch the packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ env.KIND == 'rpm' && needs.sign.outputs.rpm-id || needs.sign.outputs.deb-id }}
+          path: pkg-pages/test
+
+      - name: Install and smoke-test
+        uses: ziptie-soft/pkg-pages/install-test@924f21ed7d0f513ee2f4addd330e5f444bef866c # v0.0.0 pkg-pages self-pin
+        with:
+          packages: pkg-pages/test/*.${{ env.KIND }}
+          distro: ${{ matrix.distro }}
+          public-key: ${{ inputs.public-key }}
+          smoke: ${{ inputs.smoke }}
+
+  # Builds the site from this run's packages and the earlier releases', signed with the key.
+  repo:
+    name: Build the APT and DNF repositories
+    needs: [sign, verify]
+    # verify is skipped when install-tests is [].
+    if: ${{ !cancelled() && needs.sign.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ inputs.signing-environment }}
+    permissions:
+      contents: read # checkout, and the earlier releases' assets
+    outputs:
+      signed: ${{ steps.build.outputs.signed }}
+      fingerprint: ${{ steps.build.outputs.fingerprint }}
+      site-id: ${{ steps.build.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Fetch the .deb files
+        if: ${{ needs.sign.outputs.has-deb == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.sign.outputs.deb-id }}
+          path: pkg-pages/packages/deb
+
+      - name: Fetch the signed .rpm files
+        if: ${{ needs.sign.outputs.has-rpm == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.sign.outputs.rpm-id }}
+          path: pkg-pages/packages/rpm
+
+      - name: Fetch earlier releases' packages
+        uses: ziptie-soft/pkg-pages/fetch-history@924f21ed7d0f513ee2f4addd330e5f444bef866c # v0.0.0 pkg-pages self-pin
+        with:
+          dir: pkg-pages/packages/history
+          keep: ${{ inputs.keep-releases }}
+          patterns: ${{ inputs.history-patterns }}
+          exclude-tag: ${{ inputs.tag }}
+
+      - name: Build the repositories
+        id: build
+        uses: ziptie-soft/pkg-pages@924f21ed7d0f513ee2f4addd330e5f444bef866c # v0.0.0 pkg-pages self-pin
+        with:
+          packages: pkg-pages/packages
+          version: ${{ inputs.version }}
+          name: ${{ inputs.name }}
+          title: ${{ inputs.title }}
+          description: ${{ inputs.description }}
+          homepage: ${{ inputs.homepage }}
+          base-url: ${{ inputs.base-url }}
+          suite: ${{ inputs.suite }}
+          component: ${{ inputs.component }}
+          deb-architectures: ${{ inputs.deb-architectures }}
+          rpm-architectures: ${{ inputs.rpm-architectures }}
+          public-key: ${{ inputs.public-key }}
+          signing-key: ${{ secrets.signing-key }}
+          out: pkg-pages/site
+          artifact-name: ${{ inputs.artifact-prefix }}-site
+          retention-days: ${{ inputs.retention-days }}
+
+  # The only job with pages: write and id-token: write. Skips the deploy on a re-run of an older
+  # release, so the repositories never go back.
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: repo
+    if: ${{ inputs.deploy && needs.repo.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: pkg-pages-deploy-${{ github.repository }}
+      cancel-in-progress: false
+    environment:
+      name: ${{ inputs.pages-environment }}
+      url: ${{ steps.deploy.outputs.page_url }}
+    permissions:
+      contents: read # the list of releases, for skip-if-newer
+      pages: write # deploy-pages
+      id-token: write # deploy-pages
+    outputs:
+      page-url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check that no newer release is published
+        id: newest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SKIP_IF_NEWER: ${{ inputs.skip-if-newer }}
+        run: |
+          set -euo pipefail
+          if [ "${SKIP_IF_NEWER}" != true ]; then
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          tags="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name')"
+          newest="$(printf '%s\n%s\n' "${tags}" "${TAG}" | sed '/^$/d' | sort -V | tail -n 1)"
+          if [ "${newest}" != "${TAG}" ]; then
+            echo "::notice::${newest} is published and newer than ${TAG}: not deploying ${TAG}"
+            echo "deploy=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "deploy=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Fetch the site
+        if: ${{ steps.newest.outputs.deploy == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.repo.outputs.site-id }}
+          path: ${{ runner.temp }}/site-artifact
+
+      - name: Fetch the extra artifacts
+        if: ${{ steps.newest.outputs.deploy == 'true' && inputs.extra-artifact-ids != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.extra-artifact-ids }}
+          path: ${{ runner.temp }}/extra
+          merge-multiple: true
+
+      - name: Assemble the site
+        if: ${{ steps.newest.outputs.deploy == 'true' }}
         shell: bash
         run: |
-          echo "::error::ziptie-soft/pkg-pages publish.yml is not implemented yet; use the composite actions (docs/actions.md)"
-          exit 1
+          set -euo pipefail
+          mkdir site
+          tar -xf "${RUNNER_TEMP}/site-artifact/artifact.tar" -C site
+          test -s site/index.html
+          if [ -d "${RUNNER_TEMP}/extra" ]; then
+            if [ -n "$(find "${RUNNER_TEMP}/extra" -type l)" ]; then
+              echo "::error::extra-artifact-ids hold symbolic links"
+              exit 1
+            fi
+            (cd "${RUNNER_TEMP}/extra" && find . -type f) | while IFS= read -r f; do
+              if [ -e "site/${f#./}" ]; then
+                echo "::error::extra-artifact-ids would overwrite ${f#./} of the site"
+                exit 1
+              fi
+            done
+            cp -R "${RUNNER_TEMP}/extra/." site/
+          fi
+
+      - name: Configure GitHub Pages
+        if: ${{ steps.newest.outputs.deploy == 'true' }}
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      # One name per attempt, so a re-run doesn't collide with an earlier attempt's artifact.
+      - name: Upload the site
+        if: ${{ steps.newest.outputs.deploy == 'true' }}
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          name: ${{ inputs.artifact-prefix }}-pages-${{ github.run_attempt }}
+          path: site
+          retention-days: 1
+
+      - name: Deploy
+        id: deploy
+        if: ${{ steps.newest.outputs.deploy == 'true' }}
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        with:
+          artifact_name: ${{ inputs.artifact-prefix }}-pages-${{ github.run_attempt }}

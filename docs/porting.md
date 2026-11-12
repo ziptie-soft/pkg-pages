@@ -29,8 +29,8 @@ star-forge's `pages-repo.sh` was the most complete builder.
 | `repo` job, "Verify the repositories" | the self-check at the end of `pages-repo.sh` | Generic paths; signatures are verified against the pin with `gpgv` |
 | `verify-linux` job | `install-test/`, `check-rpm/` | The smoke test is the caller's `smoke` |
 | `linux-assets` job (cargo-deb, cargo-generate-rpm) | `package-rust/` | Version check from package metadata |
-| `sign-linux`, `repo`, `pages` jobs | `publish.yml` | Not yet |
-| plasma-drop `newer-release` check | `publish.yml` `skip-if-newer` | Not yet |
+| `sign-linux`, `verify-linux`, `repo`, `pages` jobs | `publish.yml` | Packages picked out of the artifacts; artifacts passed by ID |
+| plasma-drop `newer-release` check | `publish.yml` `skip-if-newer` | `sort -V` on the published tags |
 | `check-action-pins.sh`, `images.env` | `dev/check-action-pins.sh`, `images.env` | Plus the check that every image is listed in `images.env` |
 
 The `pages-repo.sh` rewrite reads each package's metadata instead of matching
@@ -47,17 +47,47 @@ deploy-after-verify (all from plasma-drop).
 
 ## Migrating the existing projects
 
-In this order. Each migration is one PR in that project. Users' `.list` and `.repo` files must
-keep working: same URLs, same `stable main`.
+Each migration is one PR in that project. Users' `.list` and `.repo` files keep working: the
+URLs, `stable main`, `<name>.asc`, `deb/<name>.list`, `rpm/<name>.repo` and the pool paths
+(`pool/main/p/plasma-drop`, `pool/main/s/star-forge`) stay the same. Afterwards, delete the
+project's copies of `linux-signing.sh` and `pages-repo.sh` (and the pin gate, if it adopts
+`dev/check-action-pins.sh`), and keep its `repo.asc`.
 
-1. **star-forge → `publish.yml`.** Its pipeline is the simplest. Replace `sign-linux`,
-   `verify-linux`, `repo` and `pages`, and have `checksums` and `publish-assets` use
-   `signed-rpm-artifact-id`.
-2. **plasma-drop → the composite actions.** Keep its layout (draft → verify-published → pages
-   with the badge), and swap the bodies of `sign-linux`, `verify-linux` and `repo` for
-   `sign-rpm`, `check-rpm`/`install-test`, `fetch-history` and `build-repo`.
-3. **cainary.** Decide after 1 and 2. It has several Linux build jobs and a container build, so
-   probably the composite actions.
+### plasma-drop: the composite actions
 
-Afterwards, delete the project's copies of `linux-signing.sh` and `pages-repo.sh`, and keep its
-`repo.asc`.
+Its order is checksums → publish → verify-published → pages (with the provenance badge), so the
+site has to be built before the release goes public and deployed after. That needs its own job
+layout:
+
+- `sign-linux`: drop `container: fedora` and the install step. Run `sign-rpm` with
+  `packages: dist/*/*.rpm` and `signing-key: ${{ secrets.REPO_SIGNING_KEY }}`, and condition the
+  two re-uploads on `steps.<id>.outputs.signed == 'true'` (was `env.LINUX_SIGNED`).
+- `verify-linux`: drop `container: ${{ matrix.image }}`. One `install-test` step per matrix row,
+  with `distro` (`fedora`, `debian`, `ubuntu`) and `smoke: plasma-drop --version && plasma-drop
+  print-example-config > /dev/null && test -f /usr/lib/systemd/user/plasma-drop.service`. The
+  signature check is part of `install-test`.
+- `repo`: drop the container, the install step and the two scripts. Use `fetch-history` with
+  `dir: assets` and `exclude-tag: ${{ needs.release.outputs.tag_name }}`, then `build-repo` with
+  `packages: assets`, `version`, `deb-architectures: amd64 arm64`, `rpm-architectures: x86_64
+  aarch64`, `base-url: ${{ vars.PAGES_BASE_URL }}`, `description`, `artifact-name: pages-site`
+  and `retention-days: 30`. `site-id` is `steps.<id>.outputs.artifact-id`.
+- `pages`: unchanged.
+
+### star-forge: `publish.yml`
+
+One call replaces `sign-linux`, `verify-linux`, `repo` and `pages`. Pass `ref:` the released
+tag, `deb-artifacts: release-linux-deb-*`, `rpm-artifacts: release-linux-rpm-*`, both
+architecture lists, `install-tests` with its five rows (aarch64 included), and its smoke test:
+`test -f /usr/lib/systemd/user/star-forge.service && STAR_FORGE_CONFIG=/dev/null
+XDG_RUNTIME_DIR=/tmp stfg smoke; stfgd stop || true`.
+
+`checksums` and `publish-assets` then need the call and download `signed-rpm-artifact-id`
+instead of `release-linux-rpm-*`. To keep "release assets first, repositories second", call it
+with `deploy: false` and keep a short `pages` job after `publish-assets` that deploys
+`site-artifact-id`.
+
+### cainary
+
+Either path works. Its Linux artifacts also hold the tarballs, which `publish.yml` skips. With
+the composite actions, copy only `*.deb` and `*.rpm` into the `build-repo` directory. Its
+checkout is `base_sha`, so pass that as `ref:`. Its Arch Linux tarball test stays its own job.

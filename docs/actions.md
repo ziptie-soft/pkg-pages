@@ -2,7 +2,7 @@
 
 What each part does, in which order, and when it fails. Input and output names, defaults and
 one-line descriptions are in each `action.yml` and in `publish.yml`, which are the source of
-truth. The composite actions are implemented; `publish.yml` is still interface only.
+truth.
 
 Conventions shared by every part:
 
@@ -155,18 +155,38 @@ versions against the crate. See [building.md](building.md). Its output paths are
 
 ## publish (reusable workflow)
 
-`uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<sha>`. **Interface only**: it fails
-until its jobs are implemented; use the composite actions meanwhile. The jobs it will run are
-listed in
-[design.md#jobs-of-the-reusable-workflow](design.md#jobs-of-the-reusable-workflow).
+`uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<sha>`: every step above, as four jobs
+([design.md#jobs-of-the-reusable-workflow](design.md#jobs-of-the-reusable-workflow)).
 
-The calling job grants the maximum permissions ([C4](design.md#c4-permissions-only-go-down)):
+1. **sign** (in `signing-environment`): downloads the artifacts matching `deb-artifacts` and
+   `rpm-artifacts` and keeps only their `.deb` and `.rpm` files, so build artifacts may also hold
+   tarballs or checksums. It signs the `.rpm` files and uploads both sets again, as
+   `<artifact-prefix>-deb` and `-rpm`.
+2. **verify** (a matrix from `install-tests`): `install-test` on each distribution, with `smoke`.
+   `kind` defaults to `rpm` for `fedora` and `deb` otherwise, and `arch: aarch64` runs on
+   `ubuntu-24.04-arm`. Each test installs only the packages for its own architecture.
+   `install-tests: '[]'` skips the job.
+3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
+   skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`.
+4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
+   (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Merges
+   `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.
+
+Artifacts move between the jobs by ID, so an artifact of the caller's with the same name can't
+replace them. An empty `signing-environment` runs `sign` and `repo` without an environment.
+Without one, `signing-key` resolves only from a repository secret, so keep the key in an
+environment. `ref` picks the commit that `public-key` is read from: the released tag, say, when
+the calling run's commit is not the release.
+
+The calling job grants the maximum permissions ([C4](design.md#c4-permissions-only-go-down)). It
+must grant all three, even with `deploy: false`, because GitHub checks every job's permissions
+when the run starts:
 
 ```yaml
 permissions:
-  contents: read     # checkout, fetch-history
-  pages: write       # deploy (omit with deploy: false)
-  id-token: write    # deploy (omit with deploy: false)
+  contents: read     # checkout, fetch-history, skip-if-newer
+  pages: write       # deploy
+  id-token: write    # deploy
 ```
 
 It takes one secret, `signing-key`, which the caller maps from whatever its own secret is called
@@ -177,15 +197,43 @@ secrets:
   signing-key: ${{ secrets.REPO_SIGNING_KEY }}
 ```
 
-- `deploy: false` only uploads the site and outputs `site-artifact-id`, so the caller can deploy
-  later (after its own post-publish checks, say).
-- `skip-if-newer: true` builds the site on a re-run of an older release but doesn't deploy it, so
-  the repositories never go back to an older release.
-- `extra-artifact-ids` are merged into the site root before the deploy.
-- Attach the **signed** `.rpm` files (`signed-rpm-artifact-id`) to your GitHub release.
+A full call:
+
+```yaml
+packages:
+  needs: [release, build]
+  if: ${{ needs.release.outputs.released == 'true' }}
+  permissions:
+    contents: read
+    pages: write
+    id-token: write
+  uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<sha> # vX.Y.Z
+  with:
+    version: ${{ needs.release.outputs.version }}
+    tag: ${{ needs.release.outputs.tag_name }}
+    ref: ${{ needs.release.outputs.tag_name }}
+    deb-artifacts: release-linux-deb-*
+    rpm-artifacts: release-linux-rpm-*
+    deb-architectures: amd64 arm64
+    rpm-architectures: x86_64 aarch64
+    description: What these packages are, in one line
+    install-tests: >-
+      [{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"},
+       {"distro":"ubuntu","arch":"x86_64"},{"distro":"fedora","arch":"aarch64"},
+       {"distro":"debian","arch":"aarch64"}]
+    smoke: mytool --version
+  secrets:
+    signing-key: ${{ secrets.REPO_SIGNING_KEY }}
+```
+
+- Attach the `.rpm` files from `signed-rpm-artifact-id` to your GitHub release, not the build's
+  unsigned copies, so the release page and the DNF repository serve the same bytes.
+- `deploy: false` only builds and uploads the site (`site-artifact-id`), for a caller that
+  deploys later, after its own post-publish checks say.
+- Calling it twice in one run needs a different `artifact-prefix` for each call.
 
 ## Versioning
 
-Before v1.0.0, a minor version may break inputs. After v1.0.0, renaming or removing an input,
-changing a default, or changing the published layout is a major version
-([releasing.md](releasing.md)).
+From v1.0.0 every part follows semantic versioning: renaming or removing an input or
+output, changing a default, or changing the published layout is a major version
+([releasing.md](releasing.md)). This covers `publish.yml` too.
