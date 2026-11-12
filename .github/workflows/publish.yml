@@ -189,6 +189,7 @@ jobs:
       rpm-id: ${{ steps.rpm.outputs.artifact-id }}
       has-deb: ${{ steps.collect.outputs.has-deb }}
       has-rpm: ${{ steps.collect.outputs.has-rpm }}
+      pin-id: ${{ steps.keep-pin.outputs.artifact-id }}
     steps:
       # Only the public key: none of the caller's code is present in this job.
       - name: Checkout the public key
@@ -198,6 +199,39 @@ jobs:
           sparse-checkout: /${{ inputs.public-key }}
           sparse-checkout-cone-mode: false
           persist-credentials: false
+
+      # The other jobs check against these exact bytes, so none of them checks out anything.
+      - name: Copy the public key
+        id: pin
+        shell: bash
+        env:
+          PUBLIC_KEY: ${{ inputs.public-key }}
+        run: |
+          set -euo pipefail
+          case "${PUBLIC_KEY}" in
+            '' | /* | .. | ../* | */.. | */../*)
+              echo "::error::public-key must be a relative path without '..', not '${PUBLIC_KEY}'"
+              exit 1
+              ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/pkg-pages-pin"
+          if [ -f "${PUBLIC_KEY}" ]; then
+            cp "${PUBLIC_KEY}" "${RUNNER_TEMP}/pkg-pages-pin/repo.asc"
+            echo "present=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "present=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Keep the public key
+        id: keep-pin
+        if: ${{ steps.pin.outputs.present == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-public-key
+          path: ${{ runner.temp }}/pkg-pages-pin/repo.asc
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
 
       - name: Fetch the .deb artifacts
         if: ${{ inputs.deb-artifacts != '' }}
@@ -282,8 +316,7 @@ jobs:
     if: ${{ inputs.install-tests != '[]' && inputs.install-tests != '' }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
-    permissions:
-      contents: read # checkout, for the public key
+    permissions: {}
     strategy:
       fail-fast: false
       matrix:
@@ -304,14 +337,13 @@ jobs:
             *) echo "::error::install-tests: kind must be deb or rpm, not '${KIND}'"; exit 1 ;;
           esac
 
-      # Only the public key: none of the caller's code is present in this job.
-      - name: Checkout the public key
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The public key the sign job checked out; absent for an unsigned project.
+      - name: Fetch the public key
+        if: ${{ needs.sign.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          ref: ${{ inputs.ref }}
-          sparse-checkout: /${{ inputs.public-key }}
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
+          artifact-ids: ${{ needs.sign.outputs.pin-id }}
+          path: pkg-pages/public-key
 
       - name: Fetch the packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -324,7 +356,7 @@ jobs:
         with:
           packages: pkg-pages/test/*.${{ env.KIND }}
           distro: ${{ matrix.distro }}
-          public-key: ${{ inputs.public-key }}
+          public-key: pkg-pages/public-key/repo.asc
           smoke: ${{ inputs.smoke }}
 
   # Builds the site from this run's packages and the earlier releases', signed with the key.
@@ -337,20 +369,19 @@ jobs:
     timeout-minutes: 20
     environment: ${{ inputs.signing-environment }}
     permissions:
-      contents: read # checkout, and the earlier releases' assets
+      contents: read # the earlier releases' assets (fetch-history)
     outputs:
       signed: ${{ steps.build.outputs.signed }}
       fingerprint: ${{ steps.build.outputs.fingerprint }}
       site-id: ${{ steps.build.outputs.artifact-id }}
     steps:
-      # Only the public key: none of the caller's code is present in this job.
-      - name: Checkout the public key
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The public key the sign job checked out; absent for an unsigned project.
+      - name: Fetch the public key
+        if: ${{ needs.sign.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          ref: ${{ inputs.ref }}
-          sparse-checkout: /${{ inputs.public-key }}
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
+          artifact-ids: ${{ needs.sign.outputs.pin-id }}
+          path: pkg-pages/public-key
 
       - name: Fetch the .deb files
         if: ${{ needs.sign.outputs.has-deb == 'true' }}
@@ -389,7 +420,7 @@ jobs:
           component: ${{ inputs.component }}
           deb-architectures: ${{ inputs.deb-architectures }}
           rpm-architectures: ${{ inputs.rpm-architectures }}
-          public-key: ${{ inputs.public-key }}
+          public-key: pkg-pages/public-key/repo.asc
           signing-key: ${{ secrets.signing-key }}
           out: pkg-pages/site
           artifact-name: ${{ inputs.artifact-prefix }}-site

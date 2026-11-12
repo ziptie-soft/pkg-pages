@@ -82,7 +82,7 @@ Two layers in one repository, versioned together:
 ```text
 caller: build ──► artifacts (.deb, .rpm, anything else is ignored)
 publish.yml:
-  sign    (env: signing-environment)  download → keep .deb/.rpm → sign-rpm → upload <prefix>-deb, -rpm
+  sign    (env: signing-environment)  key file only → download → keep .deb/.rpm → sign-rpm → upload
   verify  (matrix: install-tests)     download by ID → install-test (check-rpm first) → smoke
   repo    (env: signing-environment)  download by ID → fetch-history → build-repo → upload <prefix>-site
   deploy  (env: pages-environment)    skip-if-newer → merge extra-artifact-ids → deploy-pages

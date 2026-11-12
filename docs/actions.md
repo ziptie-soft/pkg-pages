@@ -161,10 +161,12 @@ versions against the crate. See [building.md](building.md). Its output paths are
 1. **sign** (in `signing-environment`): downloads the artifacts matching `deb-artifacts` and
    `rpm-artifacts` and keeps only their `.deb` and `.rpm` files, so build artifacts may also hold
    tarballs or checksums. It signs the `.rpm` files and uploads both sets again, as
-   `<artifact-prefix>-deb` and `-rpm`.
+   `<artifact-prefix>-deb` and `-rpm`, with the public key (`-public-key`). It is the only job
+   that checks out the caller's repository, and only that one file.
 2. **verify** (a matrix from `install-tests`): `install-test` on each distribution, with `smoke`.
    `kind` defaults to `rpm` for `fedora` and `deb` otherwise, and `arch: aarch64` runs on
-   `ubuntu-24.04-arm`. Each test installs only the packages for its own architecture.
+   `ubuntu-24.04-arm`. Each test installs only the packages for its own architecture. This job
+   runs the caller's `smoke` command, so it holds no secret and checks out nothing.
    `install-tests: '[]'` skips the job.
 3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
    skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`.
