@@ -30,7 +30,7 @@ signed APT and DNF repositories on GitHub Pages. It should:
 
 ```text
 <base-url>/
-  index.html               landing page: theme control, install commands, fingerprint, latest version
+  index.html               landing page: theme, install commands, fingerprint, latest version, footer
   <name>.asc               the public key (the committed pin, with revocations), when signed
   .nojekyll
   deb/

@@ -112,6 +112,7 @@ build_repo() {
         homepage="${GITHUB_SERVER_URL:-https://github.com}/$repo"
     fi
     listings="$(input DIRECTORY_LISTINGS)"
+    footer="$(input FOOTER)"
     check_bool upload "$(input_or UPLOAD true)"
     extra="$(input EXTRA_SITE)"
     [ -z "$extra" ] || check_relpath extra-site "$extra"
@@ -129,6 +130,7 @@ build_repo() {
         --rpm-architectures "$(input RPM_ARCHITECTURES)" \
         --public-key "$pin" \
         --directory-listings "${listings:-true}" \
+        --footer "${footer:-true}" \
         --extra-site "$extra"
 }
 
