@@ -80,12 +80,12 @@ Two layers in one repository, versioned together:
 ### Jobs of the reusable workflow
 
 ```text
-caller: build ──► artifacts (.deb, .rpm)
+caller: build ──► artifacts (.deb, .rpm, anything else is ignored)
 publish.yml:
-  sign      (env: signing-environment) download rpm artifacts → sign-rpm → upload one signed artifact
-  verify    (matrix: install-tests)     download → check-rpm → install-test
-  repo      (env: signing-environment) download deb + signed rpm → fetch-history → build-repo → upload site
-  deploy    (env: pages-environment)   skip-if-newer → merge extra-artifact-ids → deploy-pages
+  sign    (env: signing-environment)  download → keep .deb/.rpm → sign-rpm → upload <prefix>-deb, -rpm
+  verify  (matrix: install-tests)     download by ID → install-test (check-rpm first) → smoke
+  repo    (env: signing-environment)  download by ID → fetch-history → build-repo → upload <prefix>-site
+  deploy  (env: pages-environment)    skip-if-newer → merge extra-artifact-ids → deploy-pages
 ```
 
 `sign` and `repo` never build or run caller code. `deploy` holds `pages: write` and `id-token:
@@ -135,9 +135,8 @@ chooses the secret's name. `secrets: inherit` only works within one organisation
 so third parties map the secret explicitly. Environment branch policies are checked against the
 caller's ref.
 
-**Open:** what an empty `environment:` expression does (no environment, or an error). Test this
-before v0.1. If it errors, unsigned callers keep the default name, and an environment without
-secrets is harmless.
+An empty `signing-environment` means no environment: `environment: ${{ inputs.signing-environment }}`
+with an empty value. The self-test (`selftest.yml`) runs `publish.yml` both ways.
 
 ### C2. A reusable workflow can't reference itself
 
@@ -222,11 +221,10 @@ bandwidth. Pages must deploy from GitHub Actions (`build_type: workflow`).
 
 ## Open questions
 
-1. The empty `environment:` expression ([C1](#c1-environment-secrets-in-a-reusable-workflow)).
-2. Whether `install-test` on `aarch64` needs `ubuntu-24.04-arm` runners in the matrix. They are
-   free for public repositories; private callers pay.
-3. Repositories that already serve docs on Pages: `extra-site` (merge) is enough for v0.1. A
+1. Repositories that already serve docs on Pages: `extra-site` (merge) is enough for now. A
    sub-path mode (`<base-url>/packages/`) may come later.
 
-Settled since: the pool path follows Debian (`pool/main/libf/libfoo` for `lib*` packages), and
-the landing page's install commands name every package of the release, not only `name`.
+Settled since: the pool path follows Debian (`pool/main/libf/libfoo` for `lib*` packages); the
+landing page's install commands name every package of the release, not only `name`; and aarch64
+install tests are opt-in (`"arch": "aarch64"` in `install-tests` runs on `ubuntu-24.04-arm`,
+free for public repositories), because private callers pay for those runners.

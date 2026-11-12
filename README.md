@@ -5,8 +5,7 @@ Pages**, signed with OpenPGP, from GitHub Actions. No package hosting service, n
 release builds the packages, pkg-pages signs them and the repository metadata, and Pages serves
 the result.
 
-> **Status: pre-release.** The composite actions work and are tested; the reusable workflow
-> `publish.yml` is still interface only. There is no release yet, so nothing to pin.
+> **Status: v1.** Every part follows semantic versioning. Pin a release's commit SHA.
 
 ## What users of your project get
 
@@ -56,16 +55,43 @@ runs cargo-deb and cargo-generate-rpm for you ([docs/building.md](docs/building.
 | [`fetch-history/`](fetch-history/action.yml) | composite | Download earlier releases' packages from GitHub Releases |
 | [`install-test/`](install-test/action.yml) | composite | Install packages in a clean distro container, run a smoke test |
 | [`package-rust/`](package-rust/action.yml) | composite | Build a Rust crate's `.deb` and `.rpm` (optional) |
-| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | reusable workflow | All of the above plus the Pages deploy, wired in the right order (not implemented yet) |
+| [`.github/workflows/publish.yml`](.github/workflows/publish.yml) | reusable workflow | All of the above plus the Pages deploy, wired in the right order |
 
-Once it exists, most projects will want the **reusable workflow**. The composite actions suit a
-release with its own job layout, for example one that deploys Pages only after other checks have
-passed.
+Most projects want the **reusable workflow**. The composite actions suit a release with its own
+job layout, for example one that deploys Pages only after other checks have passed.
 
 ## Usage
 
-With the composite actions, after a build job that uploads the packages as artifacts named
-`pkg-deb-<arch>` and `pkg-rpm-<arch>`:
+After a build job that uploads the packages as artifacts (`pkg-deb-<arch>`, `pkg-rpm-<arch>`;
+other files in them are ignored):
+
+```yaml
+jobs:
+  # build: ...
+
+  packages:
+    needs: build
+    # Scoped to this job: the called workflow can't get more than the caller grants.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<full commit SHA> # vX.Y.Z
+    with:
+      version: ${{ needs.build.outputs.version }}
+      tag: ${{ needs.build.outputs.tag }}
+      deb-artifacts: pkg-deb-*
+      rpm-artifacts: pkg-rpm-*
+      description: What these packages are, in one line
+      smoke: mytool --version
+    secrets:
+      signing-key: ${{ secrets.REPO_SIGNING_KEY }}
+```
+
+It signs the `.rpm` files, install-tests on Fedora, Debian and Ubuntu, adds the last nine
+releases' packages, builds and signs the repositories, and deploys them to Pages.
+
+The same with the composite actions, for a custom job layout:
 
 ```yaml
 jobs:

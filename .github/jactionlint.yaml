@@ -15,8 +15,3 @@ rules:
   # use either form (dev/check-self-refs.sh).
   self-repository: off
 
-ignores:
-  - rule: [unused-workflow-input, unused-workflow-secret]
-    file: .github/workflows/publish.yml
-    reason: publish.yml declares its interface before its jobs exist
-    expires: "2027-06-30"
