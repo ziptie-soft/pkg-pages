@@ -5,7 +5,10 @@
 # Usage:
 #   install-test.sh [--pin FILE] FILE...
 #
-#   FILE...   all .deb (apt-get, Debian and Ubuntu) or all .rpm (dnf, Fedora and RHEL)
+#   FILE...   all .deb (apt-get, Debian and Ubuntu) or all .rpm (dnf, Fedora and RHEL). Only
+#             the packages for the container's own architecture, and all/noarch ones, are
+#             installed (read from each package's metadata), so one call can get every
+#             architecture's packages; it fails when none fits
 #   --pin     check the .rpm signatures against this public key first, as dnf does with
 #             gpgcheck=1; skipped when the file does not exist (an unsigned project)
 #   PKG_PAGES_SMOKE  shell command run after the install with `sh -eu -c` (optional)
@@ -17,6 +20,8 @@ set -eu
 lib="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$lib/common.sh"
+# shellcheck source=packages.sh
+. "$lib/packages.sh"
 # shellcheck source=signing.sh
 . "$lib/signing.sh"
 
@@ -40,18 +45,37 @@ for f in "$@"; do
     kind="$k"
 done
 
+case "$kind" in
+    rpm)
+        command -v dnf > /dev/null || die ".rpm packages need an image with dnf (fedora)"
+        native="$(rpm --eval '%{_arch}')"
+        any=noarch
+        ;;
+    deb)
+        command -v apt-get > /dev/null || die ".deb packages need an image with apt-get (debian, ubuntu)"
+        native="$(dpkg --print-architecture)"
+        any=all
+        ;;
+esac
+
+# Copy the packages for this architecture to a directory every user can read.
 stage=''
 make_tmpdir stage
 chmod 755 "$stage"
 for f in "$@"; do
-    cp "$f" "$stage/"
+    a="$(pkg_meta "$f" | cut -f4)"
+    if [ "$a" = "$native" ] || [ "$a" = "$any" ]; then
+        cp "$f" "$stage/"
+    else
+        log "skipping ${f##*/}: $a, not $native"
+    fi
 done
+[ -n "$(ls -A "$stage")" ] || die "none of the packages is for $native (or $any)"
 chmod 644 "$stage"/*
 set -- "$stage"/*
 
 case "$kind" in
     rpm)
-        command -v dnf > /dev/null || die ".rpm packages need an image with dnf (fedora)"
         if [ -n "$pin" ] && [ -f "$pin" ]; then
             check_rpm "$pin" "$@"
         else
@@ -60,7 +84,6 @@ case "$kind" in
         dnf install -y -q "$@"
         ;;
     deb)
-        command -v apt-get > /dev/null || die ".deb packages need an image with apt-get (debian, ubuntu)"
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         apt-get install -y -qq "$@"

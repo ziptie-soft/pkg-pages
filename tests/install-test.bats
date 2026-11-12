@@ -37,6 +37,23 @@ teardown_file() {
     apt-get remove -y -qq pptest > /dev/null
 }
 
+@test "installs only the packages for the container's architecture" {
+    need_system
+    need apt-get dpkg-deb
+    native="$(dpkg --print-architecture)"
+    other=arm64
+    [ "$native" != arm64 ] || other=amd64
+    "$FIXTURES" deb "$TMP/d" ppnative 1.0.0 "$native"
+    "$FIXTURES" deb "$TMP/d" ppnative 1.0.0 "$other"
+    PKG_PAGES_SMOKE='test -f /usr/share/ppnative/1.0.0' run "$LIB/install-test.sh" "$TMP"/d/*.deb
+    assert_status 0
+    assert_output_contains "skipping ppnative_1.0.0_$other.deb"
+    apt-get remove -y -qq ppnative > /dev/null
+    run "$LIB/install-test.sh" "$TMP/d/ppnative_1.0.0_$other.deb"
+    assert_status 1
+    assert_output_contains "none of the packages is for $native"
+}
+
 @test "a failing smoke command fails the test" {
     need_system
     need apt-get dpkg-deb
