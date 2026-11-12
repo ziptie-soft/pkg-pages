@@ -27,6 +27,7 @@
 # are listed in every one of them; with only all/noarch packages, amd64 arm64 / x86_64 aarch64.
 #   --public-key FILE       the pin; required when signing, published as <name>.asc
 #   --directory-listings true|false  an index.html in every directory (default true)
+#   --footer true|false     add a pkg-pages footer to the landing page and listings (default true)
 #   --extra-site DIR        merged into the site root; may not overwrite a file of the site
 #   --import-key true|false first import REPO_SIGNING_KEY into GNUPGHOME, failing closed against
 #                           --public-key, as `linux-signing.sh import` does (default false)
@@ -56,7 +57,7 @@ usage() {
 }
 
 packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
-suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true extra='' import_key=false
+suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true extra='' import_key=false
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || usage
     case "$1" in
@@ -74,6 +75,7 @@ while [ "$#" -gt 0 ]; do
         --rpm-architectures) rpm_archs="$2" ;;
         --public-key) pin="$2" ;;
         --directory-listings) listings="$2" ;;
+        --footer) footer="$2" ;;
         --extra-site) extra="$2" ;;
         --import-key) import_key="$2" ;;
         *) usage ;;
@@ -91,6 +93,7 @@ check_name name "$name"
 check_word suite "$suite"
 check_word component "$component"
 check_bool directory-listings "$listings"
+check_bool footer "$footer"
 case "$version" in
     '' | *[!A-Za-z0-9.+~_-]*) die "version must match [A-Za-z0-9.+~_-]+, not '$version'" ;;
 esac
@@ -301,7 +304,10 @@ page_head() {
       }
       a { color: var(--accent); }
       a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-      button { font: inherit; }
+      button {
+        border: 1px solid var(--border); border-radius: 6px; padding: .25rem .5rem;
+        background: var(--surface); color: var(--fg); font: inherit;
+      }
       .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
       h1 { margin: 0; font-size: clamp(1.7rem, 5vw, 2.25rem); line-height: 1.2; }
       .theme, .badge, .browse a {
@@ -311,6 +317,7 @@ page_head() {
       .theme { cursor: pointer; white-space: nowrap; }
       .theme, .copy { display: none; }
       .js .theme, .js .copy { display: inline-block; }
+      .copy[hidden] { display: none; }
       .intro { margin: .65rem 0 0; color: var(--muted); }
       .badges { display: flex; flex-wrap: wrap; gap: .5rem; margin: .8rem 0 1.4rem; }
       .badge { font-size: .85rem; text-decoration: none; }
@@ -341,6 +348,7 @@ page_head() {
       .listing li + li { border-top: 1px solid var(--border); }
       .listing a { display: block; padding: .55rem .8rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; text-decoration: none; }
       .listing a:hover, .browse a:hover { background: var(--code); }
+      footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); text-align: center; font-size: .85rem; }
       @media (prefers-reduced-motion: no-preference) {
         a, button { transition: background-color .12s ease, color .12s ease; }
       }
@@ -387,6 +395,10 @@ page_head() {
   <body>
 CSS
 }
+page_footer() {
+    [ "$footer" = true ] || return 0
+    printf '    <footer>Published with <a href="https://github.com/ziptie-soft/pkg-pages">pkg-pages</a>%s</footer>\n' "$h_footer_version"
+}
 names="$(while IFS='	' read -r k n v _a _s _p; do
     pkg_matches_version "$k" "$v" "$version" && printf '%s\n' "$n"
 done < "$index" | LC_ALL=C sort -u | tr '\n' ' ')"
@@ -395,6 +407,14 @@ h_title="$(esc "$title")"
 h_name="$(esc "$name")"
 h_base="$(esc "$base_url")"
 h_names="$(esc "$names")"
+footer_version=''
+if [ -f "$lib/../version.txt" ]; then
+    IFS= read -r footer_version < "$lib/../version.txt" || true
+    footer_version="$(printf '%s' "$footer_version" | tr -d '[:space:]')"
+    case "$footer_version" in '' | *[!A-Za-z0-9.+-]*) footer_version='' ;; esac
+fi
+h_footer_version=''
+[ -z "$footer_version" ] || h_footer_version="$(esc " $footer_version")"
 {
     page_head "$h_title"
     printf '    <header>\n      <div class="top"><h1>%s</h1><button type="button" id="theme" class="theme" aria-label="Change theme">◐ Auto</button></div>\n' "$h_title"
@@ -431,7 +451,9 @@ h_names="$(esc "$names")"
     printf '    <div class="browse-row"><span>Browse:</span><nav class="browse" aria-label="Browse repositories">'
     [ "$has_rpm" = false ] || printf '<a href="rpm/">rpm/</a>'
     [ "$has_deb" = false ] || printf '<a href="deb/">deb/</a>'
-    printf '</nav></div>\n  </body>\n</html>\n'
+    printf '</nav></div>\n'
+    page_footer
+    printf '  </body>\n</html>\n'
 } > "$out/index.html"
 : > "$out/.nojekyll"
 
@@ -463,7 +485,9 @@ if [ "$listings" = true ]; then
                 e="$(esc "$e")"
                 printf '      <li><a href="%s">%s</a></li>\n' "$e" "$e"
             done
-            printf '    </ul>\n  </body>\n</html>\n'
+            printf '    </ul>\n'
+            page_footer
+            printf '  </body>\n</html>\n'
         } > "$dir/index.html"
     done
 fi
