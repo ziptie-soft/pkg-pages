@@ -1,5 +1,12 @@
 # pkg-pages
 
+[![CI](https://github.com/ziptie-soft/pkg-pages/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/pkg-pages/actions/workflows/ci.yml)
+[![Self-test](https://github.com/ziptie-soft/pkg-pages/actions/workflows/selftest.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/pkg-pages/actions/workflows/selftest.yml)
+[![CodeQL](https://github.com/ziptie-soft/pkg-pages/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/ziptie-soft/pkg-pages/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ziptie-soft/pkg-pages/badge)](https://scorecard.dev/viewer/?uri=github.com/ziptie-soft/pkg-pages)
+[![Release](https://img.shields.io/github/v/release/ziptie-soft/pkg-pages)](https://github.com/ziptie-soft/pkg-pages/releases/latest)
+[![License](https://img.shields.io/github/license/ziptie-soft/pkg-pages)](LICENSE)
+
 Publish your project's `.deb` and `.rpm` packages as **APT and DNF repositories on GitHub
 Pages**, signed with OpenPGP, from GitHub Actions. No package hosting service, no server: a
 release builds the packages, pkg-pages signs them and the repository metadata, and Pages serves
