@@ -69,20 +69,12 @@ jobs:
           permission-contents: write # push the pin commit to the release PR branch
           permission-workflows: write # the pin commit changes .github/workflows/publish.yml
 
-      # The script runs from the trusted commit that triggered this run (W, on master). The
-      # release PR branch is only data: nothing from it is executed while the token exists.
+      # Only the trusted commit that triggered this run (W, on master) is checked out: its
+      # dev/self-pin.sh does the rewrite. The release PR branch is read and updated through the
+      # API, so nothing from it is checked out or executed while the token exists.
       - name: Checkout W (the scripts)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: trusted
-          persist-credentials: false
-
-      - name: Checkout the release PR branch (the files to pin)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.release-please.outputs.pr-branch }}
-          path: release-pr
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Pin publish.yml to the commit the release is based on
@@ -93,20 +85,37 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -euo pipefail
-          pin=trusted/dev/self-pin.sh
-          git -C release-pr merge-base --is-ancestor "${W}" HEAD ||
-            { echo "::error::the release PR branch is not based on ${W}"; exit 1; }
-          version="$(sed -n 's/^ *"\.": *"\([0-9.]*\)".*/\1/p' release-pr/.release-please-manifest.json)"
-          "${pin}" -C release-pr "${W}" "${version}"
-          if git -C release-pr diff --quiet; then
-            echo "publish.yml already points at ${W}"
-          else
-            git -C release-pr config user.name 'ziptie-soft-release[bot]'
-            git -C release-pr config user.email 'ziptie-soft-release[bot]@users.noreply.github.com'
-            git -C release-pr commit -qam "chore(release): pin publish.yml to ${W:0:12}"
-            git -C release-pr push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          api="repos/${GITHUB_REPOSITORY}"
+          file=.github/workflows/publish.yml
+          # The branch must be W plus commits that leave the actions alone (release-please's
+          # changelog and version bump), as dev/self-pin.sh --check requires of the release.
+          status="$(gh api "${api}/compare/${W}...${BRANCH}" --jq .status)"
+          case "${status}" in ahead | identical) ;; *)
+            echo "::error::the release PR branch is ${status} of ${W}, not based on it"; exit 1 ;;
+          esac
+          shipped="$(gh api "${api}/compare/${W}...${BRANCH}" --jq '.files[].filename' |
+            grep -E '^(action\.yml|images\.env|lib/.*|[^/]+/action\.yml)$' || true)"
+          if [ -n "${shipped}" ]; then
+            echo "::error::the release PR changes shipped files after ${W}: ${shipped}"; exit 1
           fi
-          "${pin}" -C release-pr --check HEAD
+          version="$(gh api "${api}/contents/.release-please-manifest.json?ref=${BRANCH}" \
+            --jq .content | base64 -d | sed -n 's/^ *"\.": *"\([0-9.]*\)".*/\1/p')"
+          blob="$(gh api "${api}/contents/${file}?ref=${BRANCH}" --jq .sha)"
+          tmp="$(mktemp)"
+          gh api "${api}/contents/${file}?ref=${BRANCH}" --jq .content | base64 -d > "${tmp}"
+          cp "${tmp}" "${tmp}.orig"
+          dev/self-pin.sh "${W}" "${version}" "${tmp}"
+          if cmp -s "${tmp}" "${tmp}.orig"; then
+            echo "publish.yml on ${BRANCH} already points at ${W}"
+            exit 0
+          fi
+          # A commit made by the API: signed by GitHub, on top of the branch's head.
+          gh api -X PUT "${api}/contents/${file}" \
+            -f message="chore(release): pin publish.yml to ${W:0:12}" \
+            -f content="$(base64 -w0 < "${tmp}")" \
+            -f sha="${blob}" \
+            -f branch="${BRANCH}" \
+            --jq '"pinned in \(.commit.sha)"'
 
   # The guarantee callers rely on, checked on the tagged commit. A failure here means the release
   # must be replaced (a fix release); the tag itself is immutable.
