@@ -7,7 +7,10 @@
 #   fetch-history.sh --dir DIR [--keep N] [--patterns "GLOB..."] [--exclude-tag TAG]
 #                    [--include-prereleases true|false] [--repository OWNER/REPO]
 #
-#   --dir                  directory to download into (created; existing files are kept)
+#   --dir                  directory to download into (created). Existing files are kept: an asset
+#                          identical to a file of the same name is skipped, and one that differs
+#                          is stored as TAG_NAME (characters of TAG other than A-Za-z0-9._-
+#                          become _)
 #   --keep                 how many releases to fetch, newest first, not counting --exclude-tag
 #                          (default 9; 0 fetches nothing)
 #   --patterns             newline- or space-separated asset globs (default "*.deb *.rpm")
@@ -59,7 +62,30 @@ done
 mkdir -p "$dir"
 fetched=
 if [ "$keep" -gt 0 ]; then
-    require_tools gh
+    require_tools gh cmp
+    work='' && make_tmpdir work
+    # store STAGE TAG: move the assets downloaded into STAGE to DIR. A name already taken in DIR by
+    # the same bytes is skipped; by other bytes (another release's asset of that name, or a file
+    # already there), the asset is stored as <tag>_<name>, so no version is silently dropped.
+    store() {
+        _safe="$(printf '%s' "$2" | tr -c 'A-Za-z0-9._-' '_')"
+        (cd "$1" && find . -type f) > "$work/names"
+        while IFS= read -r _n; do
+            _n="${_n#./}"
+            _src="$1/$_n" _dst="$dir/$_n"
+            if [ -e "$_dst" ] || [ -L "$_dst" ]; then
+                if cmp -s "$_src" "$_dst"; then rm -f "$_src"; continue; fi
+                _alt="$dir/${_safe}_$_n"
+                if [ -e "$_alt" ] || [ -L "$_alt" ]; then
+                    if cmp -s "$_src" "$_alt"; then rm -f "$_src"; continue; fi
+                    die "$_n of $2 differs from both $_dst and $_alt"
+                fi
+                log "$_n of $2 differs from $_dst, which is kept; stored as $_alt"
+                _dst="$_alt"
+            fi
+            mv "$_src" "$_dst"
+        done < "$work/names"
+    }
     flags=--exclude-drafts
     [ "$pre" = true ] || flags="$flags --exclude-pre-releases"
     # One more than needed, in case the current release is among them.
@@ -86,8 +112,11 @@ if [ "$keep" -gt 0 ]; then
             notice "release $tag has no assets matching: $patterns"
             continue
         fi
-        gh release download "$tag" --repo "$repo" --dir "$dir" --skip-existing "$@" ||
+        stage="$work/$n"
+        mkdir "$stage"
+        gh release download "$tag" --repo "$repo" --dir "$stage" "$@" ||
             die "downloading the assets of $tag failed"
+        store "$stage" "$tag"
         fetched="$fetched $tag"
         log "fetched $tag"
     done
