@@ -96,13 +96,18 @@ Set these before the first release:
 
 ## GitHub Marketplace
 
-Publish from the GitHub release page ("Publish this Action to the GitHub Marketplace"):
+Listed at <https://github.com/marketplace/actions/pkg-pages> since v1.1.0. Only the root
+`action.yml` (`build-repo`) is listed; the README is the listing text, so keep its first screen
+self-explanatory.
 
-- Only the root `action.yml` (`build-repo`) is listed.
-- `name: pkg-pages` must stay unique on the Marketplace and must not equal a GitHub account name.
-  Check this at the first listing, and rename to "pkg-pages build-repo" if it's taken.
-- Categories: Deployment, Publishing. The README is the listing text, so keep its first screen
-  self-explanatory.
+To list a release (needs 2FA, and the Marketplace Developer Agreement accepted for `ziptie-soft`):
+
+1. Open the release (created by release-please) and click **Edit**. Releases are immutable, which
+   locks only the tag and the assets: the Marketplace setting stays editable.
+2. Tick **Publish this Action to the GitHub Marketplace** and wait for "Everything looks good!".
+3. Primary category **Deployment**, second **Publishing**, then **Update release**.
+
+`name: pkg-pages` must stay unique on the Marketplace and must not equal a GitHub account name.
 
 ## Images
 
