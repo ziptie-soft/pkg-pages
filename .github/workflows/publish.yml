@@ -500,6 +500,7 @@ jobs:
           homepage: ${{ inputs.homepage }}
           base-url: ${{ inputs.base-url }}
           footer: ${{ inputs.footer }}
+          footer-version: 1.1.1 # pkg-pages self-pin
           packslip-project: ${{ inputs.packslip && format('github.com/{0}', github.repository) || '' }}
           packslip-pin: ${{ inputs.packslip-pin }}
           suite: ${{ inputs.suite }}

@@ -96,6 +96,12 @@ inputs:
     description: Add a small footer linking to pkg-pages to the landing page and directory listings.
     required: false
     default: 'true'
+  footer-version:
+    description: >-
+      The pkg-pages version the footer names; empty: this action's version.txt. publish.yml sets
+      it, as it runs the actions of the commit before the release commit.
+    required: false
+    default: ''
   packslip-project:
     description: >-
       packslip project the landing page shows install commands for, e.g. github.com/OWNER/REPO;
@@ -172,6 +178,7 @@ runs:
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
         INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
         INPUT_FOOTER: ${{ inputs.footer }}
+        INPUT_FOOTER_VERSION: ${{ inputs.footer-version }}
         INPUT_PACKSLIP_PROJECT: ${{ inputs.packslip-project }}
         INPUT_PACKSLIP_PIN: ${{ inputs.packslip-pin }}
         INPUT_EXTRA_SITE: ${{ inputs.extra-site }}

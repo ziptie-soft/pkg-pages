@@ -58,7 +58,8 @@ Builds the site described in [design.md#published-layout](design.md#published-la
 8. It writes `<name>.asc` (the pin itself, revocations included), `deb/<name>.list`,
    `rpm/<name>.repo`, the landing page (install commands for every package of `version`, and
    every caller string HTML-escaped), `.nojekyll`, directory listings and, by default, a footer
-   linking to pkg-pages (`footer: false` opts out). Then it merges `extra-site`, which may not
+   linking to pkg-pages and its version (`footer: false` opts out; `footer-version` overrides the
+   version, which defaults to the action's `version.txt`). Then it merges `extra-site`, which may not
    overwrite a file of the site or contain symbolic links. `packslip-project` adds commands for
    the caller-published release bundle; `packslip-pin` adds its optional signer pin.
 9. Self-check: the required files exist, each required Debian architecture's `Packages` lists
