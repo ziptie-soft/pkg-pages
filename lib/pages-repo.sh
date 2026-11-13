@@ -34,6 +34,8 @@
 #   --packslip-project PROJECT  show packslip and mise install commands for this project (default off)
 #   --packslip-pin PIN      optional packslip signer pin (ps1_ followed by 26 base32 characters)
 #   --extra-site DIR        merged into the site root; may not overwrite a file of the site
+#   --resign-history true|false  re-sign an earlier release's .rpm that doesn't verify against the
+#                           pin, with a warning (default true), or fail on it (false)
 #   --import-key true|false first import REPO_SIGNING_KEY into GNUPGHOME, failing closed against
 #                           --public-key, as `linux-signing.sh import` does (default false)
 #
@@ -68,7 +70,7 @@ usage() {
 packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
 suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true footer_version=''
 nix_archives='' nix_binaries='' nix_url_base=''
-packslip_project='' packslip_pin='' extra='' import_key=false
+packslip_project='' packslip_pin='' extra='' import_key=false resign_history=true
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || usage
     case "$1" in
@@ -95,11 +97,13 @@ while [ "$#" -gt 0 ]; do
         --packslip-pin) packslip_pin="$2" ;;
         --extra-site) extra="$2" ;;
         --import-key) import_key="$2" ;;
+        --resign-history) resign_history="$2" ;;
         *) usage ;;
     esac
     shift 2
 done
 check_bool import-key "$import_key"
+check_bool resign-history "$resign_history"
 
 # --- Inputs ----------------------------------------------------------------------------------
 [ -n "$packages" ] && [ -n "$out" ] && [ -n "$base_url" ] && [ -n "$version" ] && [ -n "$name" ] || usage
@@ -293,6 +297,20 @@ fi
 rpm_list=
 if [ "$has_rpm" = true ]; then
     rpm_list="$(archs_of rpm "$rpm_archs" "x86_64 aarch64")"
+    if [ -n "$fpr" ]; then
+        # Earlier releases' files that don't verify against the pin (from before signing, by a
+        # revoked subkey, or put on a release by anyone who can edit it) are re-signed, or refused.
+        hist_db=''
+        rpm_db_with_pin "$pin" hist_db
+        while IFS='	' read -r k n v pa _s p; do
+            [ "$k" = rpm ] || continue
+            if pkg_matches_version rpm "$v" "$version"; then continue; fi
+            if rpm_verifies "$pin" "$p" "$hist_db"; then continue; fi
+            [ "$resign_history" = true ] ||
+                die "$p ($n $v $pa) is from an earlier release and not signed by public-key $pin; with resign-history false it is not re-signed"
+            warning "re-signing $p ($n $v $pa): an earlier release's .rpm that is not signed by public-key $pin"
+        done < "$index"
+    fi
     for a in $rpm_list; do
         dir="$out/rpm/$a"
         mkdir -p "$dir"

@@ -54,7 +54,9 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    When signed, `InRelease` is clearsigned and `Release.gpg` detach-signed.
 6. DNF: there is one repository per architecture, and `noarch` packages are copied into each.
    When signed, files that already verify against the pin are left byte-identical, and the others
-   (earlier releases, other keys) are re-signed. Then `createrepo_c --compatibility` runs, and
+   are re-signed: this release's silently, earlier releases' with a warning each. With
+   `resign-history: false`, an earlier release's `.rpm` that doesn't verify is an error instead.
+   Then `createrepo_c --compatibility` runs, and
    `repomd.xml` is detach-signed.
 7. The architectures published are those of the packages plus the required ones. With only
    `all`/`noarch` packages they are `amd64 arm64` and `x86_64 aarch64`.
@@ -149,7 +151,7 @@ whoever can publish or edit a release can add packages to the signed site
 ([design.md](design.md#security-model)).
 
 `build-repo` re-signs `.rpm` files from releases older than the signing key, so those then differ
-from their release-page copies by the signature.
+from their release-page copies by the signature (or, with `resign-history: false`, refuses them).
 
 ## install-test
 
@@ -192,9 +194,11 @@ versions against the crate. See [building.md](building.md). Its output paths are
    `github.com/<caller repository>`; `packslip-pin` optionally pins its signer. Optional
    `nix-artifacts` downloads this run's prebuilt archives; `nix-archives` maps systems to file
    names, `nix-binaries` names the binaries within them, and `nix-url-base` overrides the default
-   release download URL.
+   release download URL. `resign-history` passes on to build-repo.
 4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
-   (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Merges
+   (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Keep every
+   release tag in one scheme: `sort -V` puts `v1.0` above `2.0`, so a tag of another scheme can
+   stop every later deploy. Merges
    `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.
 
 Artifacts move between the jobs by ID, so an artifact of the caller's with the same name can't

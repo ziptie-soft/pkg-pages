@@ -52,6 +52,7 @@ build_repo() {
     [ "$(arg_after --public-key)" = packaging/signing/repo.asc ]
     [ "$(arg_after --directory-listings)" = true ]
     [ "$(arg_after --footer)" = true ]
+    [ "$(arg_after --resign-history)" = true ]
     [ "$(arg_after --import-key)" = true ]
     [ "$(arg_after --tmpfs)" = /pkg-pages-gnupg:rw,mode=0700 ]
     grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
@@ -68,7 +69,7 @@ build_repo() {
 @test "build-repo passes the caller's values through" {
     export INPUT_NAME=hello INPUT_BASE_URL=https://pkgs.example.com INPUT_SUITE=trixie \
         INPUT_COMPONENT=contrib INPUT_TITLE='T <x>' INPUT_DEB_ARCHITECTURES='amd64 arm64' \
-        INPUT_OUT=public INPUT_DIRECTORY_LISTINGS=false INPUT_FOOTER=false INPUT_FOOTER_VERSION=1.2.3 \
+        INPUT_OUT=public INPUT_RESIGN_HISTORY=false INPUT_DIRECTORY_LISTINGS=false INPUT_FOOTER=false INPUT_FOOTER_VERSION=1.2.3 \
         INPUT_PACKSLIP_PROJECT=github.com/Owner/Repo INPUT_PACKSLIP_PIN=ps1_4yd5vxao3lfzaox72lynxuotke
     build_repo
     assert_status 0
@@ -79,6 +80,7 @@ build_repo() {
     [ "$(arg_after --deb-architectures)" = 'amd64 arm64' ]
     [ "$(arg_after --out)" = public ]
     [ "$(arg_after --footer)" = false ]
+    [ "$(arg_after --resign-history)" = false ]
     [ "$(arg_after --footer-version)" = 1.2.3 ]
     [ "$(arg_after --packslip-project)" = github.com/Owner/Repo ]
     [ "$(arg_after --packslip-pin)" = ps1_4yd5vxao3lfzaox72lynxuotke ]

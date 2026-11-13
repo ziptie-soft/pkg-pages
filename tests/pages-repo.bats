@@ -379,6 +379,7 @@ apt_only() {
     v --base-url https://x --name hello --suite 'a b'
     v --base-url https://x --name hello --directory-listings yes
     v --base-url https://x --name hello --footer yes
+    v --base-url https://x --name hello --resign-history yes
     v --base-url https://x --name hello --homepage 'javascript:alert(1)'
     v --base-url https://x --name hello --deb-architectures 'amd64 ../x'
     v --base-url https://x --name hello --extra-site "$TMP/none"
@@ -544,8 +545,31 @@ apt_only() {
     assert_status 0
     [ "$(sha "$TMP/site/rpm/x86_64/hello-1.2.3-1.x86_64.rpm")" = "$before" ]
     [ "$(sha "$TMP/site/rpm/x86_64/hello-1.2.2-1.x86_64.rpm")" != "$old" ]
+    assert_output_contains "re-signing $TMP/pkgs/hello-1.2.2-1.x86_64.rpm"
+    refute grep -q 're-signing .*1\.2\.3' <<< "$output"
     # The input directory is never modified.
     [ "$(sha "$TMP/pkgs/hello-1.2.2-1.x86_64.rpm")" = "$old" ]
+}
+
+@test "resign-history false: an earlier release's unsigned .rpm stops the build; signed ones pass" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    pkgs rpm
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
+    export REPO_SIGNING_KEY
+    "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" sign-rpm "$TMP/pkgs/hello-1.2.3-1.x86_64.rpm" 2> /dev/null
+    rm -rf "$GNUPGHOME"
+    build_signed --resign-history false
+    assert_status 1
+    assert_output_contains "resign-history false"
+    assert_output_contains "hello-1.2.2"
+    rm -rf "$TMP/site" "$GNUPGHOME"
+    gnupg_home
+    "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" sign-rpm "$TMP/pkgs/hello-1.2.2-1.x86_64.rpm" 2> /dev/null
+    rm -rf "$GNUPGHOME"
+    build_signed --resign-history false
+    assert_status 0
 }
 
 @test "signing fails closed: a pin without a key stops the build" {

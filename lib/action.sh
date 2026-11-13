@@ -138,6 +138,7 @@ build_repo() {
         --rpm-architectures "$(input RPM_ARCHITECTURES)" \
         --nix-archives "$nix_archives" --nix-binaries "$nix_binaries" --nix-url-base "$nix_url_base" \
         --public-key "$pin" \
+        --resign-history "$(input_or RESIGN_HISTORY true)" \
         --directory-listings "${listings:-true}" \
         --footer "${footer:-true}" \
         --footer-version "$(input FOOTER_VERSION)" \

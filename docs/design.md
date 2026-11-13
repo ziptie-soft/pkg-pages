@@ -125,8 +125,8 @@ Assets: the signing subkey, the caller's users' trust in the pin, the Pages depl
   releases, and the site is signed over them: `.rpm` files that don't verify against the pin are
   re-signed, and the signed `InRelease` lists every `.deb`. Whoever can publish or edit a release
   of the caller's repository, including any workflow token with `contents: write`, can therefore
-  get packages signed. Turn on immutable releases and limit who can create tags
-  ([signing.md](signing.md#setting-up-a-project)).
+  get packages signed. Turn on immutable releases and limit who can create tags, or set
+  `resign-history: false` ([signing.md](signing.md#setting-up-a-project)).
 
 Threats out of scope: a compromised GitHub, a caller that keeps the key as a repository secret,
 and a malicious maintainer of the caller's repository.
@@ -231,7 +231,7 @@ bandwidth. Pages must deploy from GitHub Actions (`build_type: workflow`).
 - **D7. History from GitHub Releases** (last 9 by default), not from the live site. Releases are
   the permanent archive and are attested by the caller's build. Re-signing older `.rpm` files
   with the current subkey is expected, and documented as a difference from their release-page
-  copies.
+  copies. `resign-history: false` refuses it instead.
 - **D8. Apache-2.0**, like the rest of ziptie-soft.
 - **D9. Optional Nix flakes install prebuilt archives.** Each archive URL and SHA-256 is written
   into an unsigned flake; the action never builds binaries. The key-holding publish job only lists
