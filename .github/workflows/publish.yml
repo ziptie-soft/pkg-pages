@@ -319,7 +319,7 @@ jobs:
 
       - name: Sign the .rpm files
         if: ${{ steps.collect.outputs.has-rpm == 'true' }}
-        uses: ziptie-soft/pkg-pages/sign-rpm@3089ddfd77ded59451278bc8078eb13ae01f534b # v1.1.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/sign-rpm@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           packages: pkg-pages/rpm/*.rpm
           public-key: ${{ inputs.public-key }}
@@ -391,7 +391,7 @@ jobs:
           path: pkg-pages/test
 
       - name: Install and smoke-test
-        uses: ziptie-soft/pkg-pages/install-test@3089ddfd77ded59451278bc8078eb13ae01f534b # v1.1.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/install-test@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           packages: pkg-pages/test/*.${{ env.KIND }}
           distro: ${{ matrix.distro }}
@@ -481,7 +481,7 @@ jobs:
           path: pkg-pages/nix
 
       - name: Fetch earlier releases' packages
-        uses: ziptie-soft/pkg-pages/fetch-history@3089ddfd77ded59451278bc8078eb13ae01f534b # v1.1.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/fetch-history@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           dir: pkg-pages/packages/history
           keep: ${{ inputs.keep-releases }}
@@ -490,7 +490,7 @@ jobs:
 
       - name: Build the repositories
         id: build
-        uses: ziptie-soft/pkg-pages@3089ddfd77ded59451278bc8078eb13ae01f534b # v1.1.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           packages: pkg-pages/packages
           version: ${{ inputs.version }}
