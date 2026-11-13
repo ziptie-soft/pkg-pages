@@ -117,6 +117,16 @@ apt_only() {
     assert_output_contains "not a regular file"
 }
 
+@test "two .deb files that differ only in their epoch: an error, not an overwrite" {
+    need_deb
+    pkgs deb
+    "$FIXTURES" deb "$TMP/epoch" hello 1:1.2.3-1 amd64
+    cp "$TMP/epoch"/*.deb "$TMP/pkgs/"
+    build
+    assert_status 1
+    assert_output_contains "epoch"
+}
+
 @test "Packages lists every version; Architecture: all is in every binary-<arch>" {
     need_deb
     pkgs deb
