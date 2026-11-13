@@ -107,7 +107,8 @@ Assets: the signing subkey, the caller's users' trust in the pin, the Pages depl
 - **The pin is the root of trust.** It is the committed public key, `packaging/signing/repo.asc`
   by default: exactly one primary, with its subkeys and revocations. `import` fails unless the
   secret is a subkey the pin lists, can sign (no passphrase, not expired or revoked), and is the
-  only secret key. The published `<name>.asc` is the pin, so revocations reach users.
+  only secret key. The published `<name>.asc` is the pin, revocations included, but clients keep
+  the copy they first downloaded: a revocation reaches only users who fetch it again.
 - **Fail closed** ([signing.md](signing.md#fail-closed-matrix)). Unsigned output happens only when
   both the pin and the key are absent.
 - **Separation.** The key never shares a job with a build, the caller's smoke code or the Pages

@@ -18,7 +18,9 @@ SHA-256.
   and without a passphrase. RSA 4096 is accepted by every supported rpm, dnf and apt (sqv).
 - **The pin** is the public certificate committed at `packaging/signing/repo.asc` (input
   `public-key`): the primary, every subkey and every revocation, armored, exactly one key. It is
-  what gets published as `<name>.asc`, so revocations reach users with the next fetch.
+  published as `<name>.asc`. Clients keep the copy they downloaded (APT's file in
+  `/etc/apt/keyrings`, the key dnf imported), so revocations and new subkeys reach users only when
+  they fetch it again.
 
 ## Fail-closed matrix
 
@@ -81,17 +83,20 @@ The next release is the first signed one.
 
 ## Rotating or revoking the subkey
 
-Users trust the primary, so a subkey change needs nothing from them beyond the `<name>.asc` they
-fetch. Order matters, because `import` refuses a subkey that the committed pin doesn't list:
+Users trust the primary, so a subkey change asks no new trust of them, but they must download
+`<name>.asc` again: after a rotation, `apt update` fails until APT users rerun the landing page's
+`curl` command for it. Order matters, because `import` refuses a subkey that the committed pin
+doesn't list:
 
 1. Add the new subkey (`--quick-add-key <FPR> rsa4096 sign 3y`). If the old one leaked, revoke it
    (`gpg --homedir <DIR> --edit-key <FPR>`, then `key N`, `revkey`, `save`).
 2. Export and commit `repo.asc`, and push it to the default branch.
 3. Only then set the secret to the new subkey.
 
-Releases fail between steps 2 and 3, which is intended. Once the revocation is published, dnf
-refuses packages signed by the revoked subkey, and the next site build re-signs earlier
-releases' `.rpm` files with the current one.
+Between steps 2 and 3, releases keep signing with the old subkey, unless step 1 revoked it: then
+they fail, which is intended. The next site build re-signs earlier releases' `.rpm` files that
+the pin no longer accepts. A revocation protects only users who download `<name>.asc` again:
+neither apt nor dnf fetches it again on its own.
 
 If the **primary** leaks: import the revocation certificate (delete the `:` before
 `-----BEGIN`), and commit the revoked `repo.asc` (every release fails from then on). Then start

@@ -50,7 +50,8 @@ commands, so users who know one know them all ([docs/design.md](docs/design.md#p
   repositories are published unsigned. Once the key is committed, every release must be signed
   with it, or the release fails ([docs/signing.md](docs/signing.md)).
 - **An offline primary key, with only a signing subkey in CI.** Subkeys can be rotated or
-  revoked without users re-trusting anything.
+  revoked without users trusting a new key; they download `<name>.asc` again to get the change
+  ([docs/signing.md](docs/signing.md#rotating-or-revoking-the-subkey)).
 - **Earlier versions stay installable.** The last N releases' packages are fetched from GitHub
   Releases and republished, so `dnf downgrade` and `apt install pkg=1.2.3` keep working.
 - **Install tests** on clean Fedora, Debian and Ubuntu containers before anything goes public.
