@@ -93,6 +93,37 @@ jobs:
           PKG_PAGES_TEST_SYSTEM: '1'
         run: bats tests
 
+  # Install a package from the generated tarball flake in the same pinned Nix release used to
+  # refresh its lock. This job has no secrets and builds only a throwaway fixture archive.
+  nix:
+    name: Nix flake end to end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and install the fixture flake
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(sed -n 's/^NIX_IMAGE=//p' images.env)"
+          docker run --rm --security-opt label=disable -v "$PWD:/w" -w /w "$image" sh -euc '
+            mkdir -p /w/archives /w/fixture/hello-1.2.3/bin
+            printf "#!/bin/sh\\necho hi\\n" > /w/fixture/hello-1.2.3/bin/hello
+            chmod +x /w/fixture/hello-1.2.3/bin/hello
+            tar -czf /w/archives/hello.tar.gz -C /w/fixture hello-1.2.3
+            /w/lib/nix-flake.sh --out /w/site/nix --name hello --version 1.2.3 \
+              --url-base file:///w/archives --binaries bin/hello \
+              --archives x86_64-linux=/w/archives/hello.tar.gz
+            # Let fetchurl read the throwaway archive from the mounted fixture directory.
+            nix --option sandbox false --extra-experimental-features "nix-command flakes" profile install \
+              tarball+file:///w/site/nix/flake.tar.gz
+            /root/.nix-profile/bin/hello | grep -qx hi
+          '
+
   # The composite actions as callers use them, from this checkout (`uses: ./…` is fine here: this
   # workflow is not shipped). A throwaway key is generated in the job; it signs nothing real.
   actions:
