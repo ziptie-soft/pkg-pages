@@ -355,6 +355,8 @@ apt_only() {
     v --base-url 'https://x/a;b' --name hello
     v --base-url 'https://x/?q' --name hello
     v --base-url https://x --name Hello
+    v --base-url https://x --name hello --title "$(printf 'a\nb')"
+    v --base-url https://x --name hello --title "$(printf 'a\tb')"
     v --base-url https://x --name hello --suite 'a b'
     v --base-url https://x --name hello --directory-listings yes
     v --base-url https://x --name hello --footer yes

@@ -14,7 +14,7 @@
 #   --version VERSION       the release; a package of it must be among the packages
 #   --name NAME             base name of <name>.asc, deb/<name>.list, rpm/<name>.repo
 # Optional:
-#   --title TEXT            landing page title and APT Description (default "NAME package repositories")
+#   --title TEXT            landing page title, .repo name and APT Description; one line (default "NAME package repositories")
 #   --description TEXT      one line for the landing page
 #   --homepage URL          project link on the landing page
 #   --suite SUITE           APT suite and codename (default stable)
@@ -125,6 +125,9 @@ if [ -n "$nix_archives$nix_binaries$nix_url_base" ]; then
     case "$nix_url_base" in *'"'* | *\\* | *'$'* | *'`'* | *' '*) die "nix-url-base contains characters unsafe in a Nix string" ;; esac
 fi
 [ -z "$extra" ] || [ -d "$extra" ] || die "extra-site $extra is not a directory"
+case "$title" in
+    *[[:cntrl:]]*) die "title must be one line without control characters (it goes into $name.repo and the APT Release file)" ;;
+esac
 case "$packslip_project$packslip_pin" in
     *[[:cntrl:]]*) die "packslip inputs may not contain control characters" ;;
 esac

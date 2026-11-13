@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ''
   title:
-    description: Landing page title and APT Description. Defaults to "<name> package repositories".
+    description: Landing page title, .repo name and APT Description, on one line. Defaults to "<name> package repositories".
     required: false
     default: ''
   description:
