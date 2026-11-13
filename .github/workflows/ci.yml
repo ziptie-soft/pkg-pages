@@ -270,6 +270,8 @@ jobs:
           test -s site/deb/dists/stable/InRelease
           test -s site/rpm/x86_64/repodata/repomd.xml.asc
           grep -q '&lt;self-test&gt;' site/index.html
+          # The footer names the version: version.txt reaches the docker-mode container.
+          grep -qF "pkg-pages</a> $(cat version.txt)</footer>" site/index.html
           ls site/rpm/x86_64/
 
   # package-rust on both architectures, then installing what it built.
