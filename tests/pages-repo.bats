@@ -261,7 +261,9 @@ apt_only() {
     build
     assert_status 0
     grep -q 'ziptie-soft/pkg-pages' "$TMP/site/index.html"
-    grep -q 'pkg-pages</a> 1.0.0' "$TMP/site/index.html"
+    # The footer names this checkout's version, which release-please bumps in version.txt.
+    v="$(cat "$LIB/../version.txt")"
+    grep -qF "pkg-pages</a> $v" "$TMP/site/index.html"
     grep -q 'ziptie-soft/pkg-pages' "$TMP/site/deb/index.html"
     rm -rf "$TMP/site"
     build --footer false
