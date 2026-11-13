@@ -15,9 +15,8 @@
 #       W and REV, so what a caller pinning REV runs is exactly what REV contains; and unless
 #       every pin comment and footer-version line names one version, version.txt's at REV.
 #   dev/self-pin.sh -C DIR ...
-#       Work on the checkout in DIR instead of the one this script is in. release.yml runs the
-#       script from the trusted master commit on the release PR's checkout, so nothing from
-#       that branch is executed with the release app's token.
+#       Work on the checkout in DIR instead of the one this script is in, so that a trusted
+#       copy of the script can rewrite or check another checkout.
 #
 # A self reference without the marker comment is an error in both modes: it would not be moved
 # at the next release.
