@@ -8,7 +8,7 @@
 #
 # Required:
 #   --packages DIR          every .deb and .rpm the site publishes (searched recursively); any
-#                           other file is an error
+#                           other file, or a symbolic link, is an error
 #   --out DIR               the site directory to create; it must not exist
 #   --base-url URL          where OUT is served: https://... or file:///..., letters, digits and . _ ~ : / % + @ = , - only
 #   --version VERSION       the release; a package of it must be among the packages
@@ -155,6 +155,8 @@ work=''
 make_tmpdir work
 index="$work/index"   # kind<TAB>name<TAB>version<TAB>arch<TAB>sha256<TAB>path, one per package
 : > "$index"
+odd="$(find "$packages" ! -type f ! -type d | LC_ALL=C sort | head -n 1)"
+[ -z "$odd" ] || die "packages $packages holds $odd, which is not a regular file (symbolic links are refused)"
 find "$packages" -type f | LC_ALL=C sort > "$work/files"
 [ -s "$work/files" ] || die "packages $packages holds no files"
 while IFS= read -r f; do

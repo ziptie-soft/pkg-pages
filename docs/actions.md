@@ -35,9 +35,10 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    `<owner>.github.io` repository. `homepage` is the repository URL. `packslip-project` and
    `packslip-pin` default to empty; a non-empty project adds the CLI-only packslip and mise card,
    and a pin is allowed only with a project.
-2. Every file under `packages`, recursively, must be a `.deb` or a binary `.rpm`. Name, version
-   and architecture come from `dpkg-deb -f` and `rpm -qp`; file names don't matter. The same
-   package twice is fine if the bytes match and an error if they don't.
+2. Every file under `packages`, recursively, must be a `.deb` or a binary `.rpm`. Symbolic links and
+   other files that aren't regular files are errors too. Name, version and architecture come from
+   `dpkg-deb -f` and `rpm -qp`; file names don't matter. The same package twice is fine if the
+   bytes match and an error if they don't.
 3. The release must be there. Each architecture listed in `deb-architectures` and
    `rpm-architectures` needs a package of `version` built for exactly that architecture; with
    both empty, any package of `version` will do. An `all` or `noarch` package counts only if you

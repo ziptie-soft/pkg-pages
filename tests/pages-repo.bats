@@ -108,6 +108,15 @@ apt_only() {
     [ -f "$TMP/site/rpm/x86_64/hello-1.2.3-1.x86_64.rpm" ]
 }
 
+@test "fails on a symbolic link among the packages" {
+    need_deb
+    pkgs deb
+    ln -s "$TMP/pkgs/hello_1.2.3-1_amd64.deb" "$TMP/pkgs/link.deb"
+    build
+    assert_status 1
+    assert_output_contains "not a regular file"
+}
+
 @test "Packages lists every version; Architecture: all is in every binary-<arch>" {
     need_deb
     pkgs deb
