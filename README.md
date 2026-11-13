@@ -38,6 +38,8 @@ commands, so users who know one know them all ([docs/design.md](docs/design.md#p
 - **Earlier versions stay installable.** The last N releases' packages are fetched from GitHub
   Releases and republished, so `dnf downgrade` and `apt install pkg=1.2.3` keep working.
 - **Install tests** on clean Fedora, Debian and Ubuntu containers before anything goes public.
+- **Optional packslip and mise install commands** on the landing page for CLIs published on the
+  caller's GitHub release.
 - **Supply-chain hygiene.** Every action and container image is pinned, the signing key never
   shares a job with a build or with the Pages token, and permissions are set per job.
 
