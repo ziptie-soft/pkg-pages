@@ -249,7 +249,11 @@ if [ "$has_deb" = true ]; then
         [ "$k" = deb ] || continue
         dir="$deb/pool/$component/$(pool_prefix "$n")/$n"
         mkdir -p "$dir"
-        cp "$p" "$dir/${n}_${v#*:}_$a.deb"
+        dest="$dir/${n}_${v#*:}_$a.deb"
+        # Pool file names leave out the epoch, as Debian's do: two versions that differ only in it
+        # would share one file.
+        [ ! -e "$dest" ] || die "$p and another .deb are both ${dest##*/}: versions that differ only in their epoch can't both be published"
+        cp "$p" "$dest"
     done < "$index"
     (
         cd "$deb"

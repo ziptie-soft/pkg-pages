@@ -47,9 +47,10 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    release; `1.2.3-rc.1` also matches `1.2.3~rc.1`.
 4. The key is imported, failing closed ([signing.md](signing.md#fail-closed-matrix)).
 5. APT: the `.deb` files go to `pool/<component>/<p>/<package>/`, where `<p>` is the first letter,
-   or `lib` plus the fourth letter for `lib*` packages. Then `apt-ftparchive packages` runs for
-   each architecture, followed by `apt-ftparchive release`. When signed, `InRelease` is
-   clearsigned and `Release.gpg` detach-signed.
+   or `lib` plus the fourth letter for `lib*` packages. File names leave out the epoch, as
+   Debian's do, so two `.deb` files that differ only in the epoch are an error. Then
+   `apt-ftparchive packages` runs for each architecture, followed by `apt-ftparchive release`.
+   When signed, `InRelease` is clearsigned and `Release.gpg` detach-signed.
 6. DNF: there is one repository per architecture, and `noarch` packages are copied into each.
    When signed, files that already verify against the pin are left byte-identical, and the others
    (earlier releases, other keys) are re-signed. Then `createrepo_c --compatibility` runs, and
