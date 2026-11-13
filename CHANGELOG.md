@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.1](https://github.com/ziptie-soft/pkg-pages/compare/v1.1.0...v1.1.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **build-repo:** mount version.txt in docker mode so the footer names the pkg-pages version ([ebc22d8](https://github.com/ziptie-soft/pkg-pages/commit/ebc22d8ffa3f78eea2d2fe0dc50d15d9d6a9e753))
+* **build-repo:** widen the landing page and wrap long commands instead of scrolling ([63f9371](https://github.com/ziptie-soft/pkg-pages/commit/63f9371448f579dea81694956c864abb72da5c87))
+* **publish:** give the deploy job a fixed name, as skipped jobs show expressions unevaluated ([ea1ad7e](https://github.com/ziptie-soft/pkg-pages/commit/ea1ad7e0cdbd009a18b70010f9eb8d279358c182))
+* **publish:** name the deploy job after the deploy input, so a skipped deploy reads as intended ([e5628bd](https://github.com/ziptie-soft/pkg-pages/commit/e5628bd659b1e70e89640580568c46413c451860))
+
 ## [1.1.0](https://github.com/ziptie-soft/pkg-pages/compare/v1.0.0...v1.1.0) (2026-11-13)
 
 
