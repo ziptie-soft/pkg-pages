@@ -19,7 +19,11 @@ printf '%s\n' "$@" > "$FAKE_LOG/docker.args"
 env > "$FAKE_LOG/docker.env"
 prev=
 for a in "$@"; do
-    case "$prev:$a" in --volume:*:/pkg-pages-io) echo "from=container" >> "${a%:/pkg-pages-io}/output" ;; esac
+    case "$prev:$a" in --volume:*:/pkg-pages-io)
+        io="${a%:/pkg-pages-io}"
+        stat -c %a "$io" "$io/output" "$io/env" > "$FAKE_LOG/io.modes"
+        echo "from=container" >> "$io/output" ;;
+    esac
     prev="$a"
 done
 exit "${FAKE_STATUS:-0}"
@@ -77,6 +81,42 @@ has_args() {
     has_args "$LIB/in-container.sh" echo
     args | grep -qx -- --rm
     grep -qx from=container "$GITHUB_OUTPUT"
+}
+
+@test "docker mode: the io directory and files are private (700, 600)" {
+    run "$LIB/run.sh" docker --image debian -- true
+    assert_status 0
+    [ "$(cat "$TMP/io.modes")" = "$(printf '700\n600\n600')" ]
+}
+
+@test "docker mode --read-only mounts the checkout read-only, and refuses --writes" {
+    run "$LIB/run.sh" docker --image debian --read-only -- true
+    assert_status 0
+    has_args --volume "$TMP/work:$TMP/work:ro"
+    run "$LIB/run.sh" docker --image debian --read-only --writes site -- true
+    assert_status 1
+}
+
+@test "docker mode refuses a working directory with ':' in its path" {
+    mkdir "$TMP/a:b"
+    cd "$TMP/a:b"
+    run "$LIB/run.sh" docker --image debian -- true
+    assert_status 1
+    assert_output_contains "contains ':'"
+    [ ! -e "$TMP/docker.args" ]
+}
+
+@test "host mode --gnupg: an interrupted step stops gpg-agent too" {
+    need gpg gpgconf gpg-connect-agent
+    run "$LIB/run.sh" host --gnupg -- sh -c 'gpg-connect-agent "getinfo pid" /bye | sed -n "s/^D //p" > "$1"; kill -TERM "$PPID"' sh "$TMP/agent.pid"
+    assert_status 143
+    pid="$(cat "$TMP/agent.pid")"
+    [ -n "$pid" ]
+    for _ in $(seq 20); do
+        kill -0 "$pid" 2> /dev/null || break
+        sleep 0.1
+    done
+    refute kill -0 "$pid"
 }
 
 @test "docker mode resolves ubuntu and fedora too" {

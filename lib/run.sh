@@ -18,6 +18,8 @@
 #   --writes PATH    a path COMMAND creates or changes, relative to the working directory. In
 #                    docker mode it is chowned back to the calling user afterwards, so the later
 #                    steps of the job can read and delete it.
+#   --read-only      docker mode: mount the working directory read-only (COMMAND writes nothing
+#                    there; not with --writes)
 #
 # docker mode mounts the working directory (the caller's checkout) at the same path, and lib/
 # read-only at its own path, so COMMAND sees the same paths in both modes. Step outputs and
@@ -30,14 +32,14 @@ lib="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$lib/common.sh"
 
-usage() { die "usage: $0 host|docker [--image IMAGE] [--tools \"T...\"] [--gnupg] [--env NAME]... [--writes PATH]... -- COMMAND [ARG]..."; }
+usage() { die "usage: $0 host|docker [--image IMAGE] [--tools \"T...\"] [--gnupg] [--env NAME]... [--writes PATH]... [--read-only] -- COMMAND [ARG]..."; }
 
 [ "$#" -ge 1 ] || usage
 mode="$1"
 shift
 case "$mode" in host | docker) ;; *) die "runner-mode must be host or docker, not '$mode'" ;; esac
 
-image='' tools='' gnupg=false envs='' writes=''
+image='' tools='' gnupg=false envs='' writes='' ro=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --image) [ "$#" -ge 2 ] || usage; image="$2"; shift 2 ;;
@@ -56,11 +58,13 @@ while [ "$#" -gt 0 ]; do
 $2"
             shift 2
             ;;
+        --read-only) ro=true; shift ;;
         --) shift; break ;;
         *) usage ;;
     esac
 done
 [ "$#" -ge 1 ] || usage
+[ "$ro" = false ] || [ -z "$writes" ] || die "--read-only and --writes exclude each other"
 
 # --- host ------------------------------------------------------------------------------------
 if [ "$mode" = host ]; then
@@ -71,10 +75,14 @@ if [ "$mode" = host ]; then
         make_tmpdir GNUPGHOME
         chmod 700 "$GNUPGHOME"
         export GNUPGHOME
+        # Stop the agent gpg started, so nothing keeps the key in memory: after the command, and
+        # when the step is interrupted (the EXIT trap then removes GNUPGHOME).
+        stop_agent() { gpgconf --homedir "$GNUPGHOME" --kill all > /dev/null 2>&1 || true; }
+        trap 'stop_agent; exit 130' INT
+        trap 'stop_agent; exit 143' TERM
         status=0
         "$@" || status=$?
-        # Stop the agent gpg started, so nothing keeps the key in memory after the step.
-        gpgconf --homedir "$GNUPGHOME" --kill all > /dev/null 2>&1 || true
+        stop_agent
         exit "$status"
     fi
     exec "$@"
@@ -100,8 +108,14 @@ io=''
 make_tmpdir io
 : > "$io/output"
 : > "$io/env"
-chmod 777 "$io"
-chmod 666 "$io/output" "$io/env"
+# Private to the calling user: rootful Docker's root writes them anyway, and rootless engines map
+# root to the calling user.
+chmod 700 "$io"
+chmod 600 "$io/output" "$io/env"
+# docker --volume splits on ':', so a path holding one can't be mounted.
+for p in "$PWD" "$lib" "$io"; do
+    case "$p" in *:*) die "docker mode can't mount $p: the path contains ':'; use runner-mode: host" ;; esac
+done
 
 # Rootless podman (local runs) maps the container's root to the calling user already, where chown
 # would hand the files to a subordinate uid; and on SELinux hosts it can't read the bind mounts
@@ -112,10 +126,12 @@ case "$(basename "$docker")" in podman*) podman=true ;; *) owner="$(id -u):$(id 
 
 # POSIX sh has no arrays, so the docker arguments are built in "$@" by prepending: first the
 # image and COMMAND, then the options in front of them (their order doesn't matter).
+ws=''
+[ "$ro" = false ] || ws=:ro
 set -- "$image" sh "$lib/in-container.sh" "$@"
 set -- \
     --rm -i \
-    --volume "$PWD:$PWD" --workdir "$PWD" \
+    --volume "$PWD:$PWD$ws" --workdir "$PWD" \
     --volume "$lib:$lib:ro" \
     --volume "$io:/pkg-pages-io" \
     --env GITHUB_OUTPUT=/pkg-pages-io/output \

@@ -152,6 +152,7 @@ dist/b/y.rpm" ]
     run "$LIB/action.sh" check-rpm
     assert_status 0
     grep -qx dist/y.rpm "$TMP/docker.args"
+    grep -qxF "$TMP/work:$TMP/work:ro" "$TMP/docker.args"
     export INPUT_PACKAGES='dist/x.rpm
 dist/none-*.rpm'
     run "$LIB/action.sh" check-rpm

@@ -13,8 +13,9 @@ Conventions shared by every part:
 - **`runner-mode: docker`** (the default) runs the tools with `docker run` in the image from
   `images.env` at the pinned commit. It needs Docker on the runner, which every GitHub-hosted
   Ubuntu runner has, and it installs the tools in the container on each run. The checkout is
-  mounted at the same path, and files written in the container are handed back to the runner
-  user. **`host`** runs the tools from `PATH` and fails early, naming any that are missing. Use
+  mounted at the same path (read-only for `check-rpm`), and files written in the container are
+  handed back to the runner user. A checkout whose path contains `:` can't be mounted; use `host`
+  there. **`host`** runs the tools from `PATH` and fails early, naming any that are missing. Use
   it in a job with its own `container:` (docker mode can't mount that job's paths), or when the
   tools are already installed. `ubuntu-slim` runners have no Docker, so run docker-mode actions
   and `install-test` on `ubuntu-24.04` (or `-arm`); `fetch-history` runs anywhere.
