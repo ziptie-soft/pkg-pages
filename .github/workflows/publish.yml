@@ -516,9 +516,10 @@ jobs:
           retention-days: ${{ inputs.retention-days }}
 
   # The only job with pages: write and id-token: write. Skips the deploy on a re-run of an older
-  # release, so the repositories never go back.
+  # release, so the repositories never go back. A reusable workflow always lists its jobs, so with
+  # deploy: false the skipped job's name says it was not asked for (the caller deploys the site).
   deploy:
-    name: Deploy to GitHub Pages
+    name: ${{ inputs.deploy && 'Deploy to GitHub Pages' || 'Deploy to GitHub Pages (off, deploy is false)' }}
     needs: repo
     if: ${{ inputs.deploy && needs.repo.result == 'success' }}
     runs-on: ubuntu-24.04
