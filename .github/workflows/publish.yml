@@ -230,6 +230,28 @@ jobs:
       has-rpm: ${{ steps.collect.outputs.has-rpm }}
       pin-id: ${{ steps.keep-pin.outputs.artifact-id }}
     steps:
+      # Before the sparse checkout uses it: a newline or a glob would add checkout patterns.
+      - name: Check the public-key input
+        shell: bash
+        env:
+          PUBLIC_KEY: ${{ inputs.public-key }}
+        run: |
+          set -euo pipefail
+          case "${PUBLIC_KEY}" in
+            *$'\n'*)
+              echo "::error::public-key must be a single line"
+              exit 1
+              ;;
+            *'*'* | *'?'* | *'['* | *\\*)
+              echo "::error::public-key may not contain * ? [ or \\ (it is a sparse-checkout pattern): '${PUBLIC_KEY}'"
+              exit 1
+              ;;
+            '' | /* | .. | ../* | */.. | */../*)
+              echo "::error::public-key must be a relative path without '..', not '${PUBLIC_KEY}'"
+              exit 1
+              ;;
+          esac
+
       # Only the public key: none of the caller's code is present in this job.
       - name: Checkout the public key
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -247,12 +269,6 @@ jobs:
           PUBLIC_KEY: ${{ inputs.public-key }}
         run: |
           set -euo pipefail
-          case "${PUBLIC_KEY}" in
-            '' | /* | .. | ../* | */.. | */../*)
-              echo "::error::public-key must be a relative path without '..', not '${PUBLIC_KEY}'"
-              exit 1
-              ;;
-          esac
           mkdir -p "${RUNNER_TEMP}/pkg-pages-pin"
           if [ -f "${PUBLIC_KEY}" ]; then
             cp "${PUBLIC_KEY}" "${RUNNER_TEMP}/pkg-pages-pin/repo.asc"
