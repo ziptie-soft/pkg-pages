@@ -133,6 +133,9 @@ fi
 for name in $envs; do
     set -- --env "$name" "$@"
 done
+# version.txt sits beside lib/: pages-repo.sh names it in the landing page footer.
+root="$(dirname "$lib")"
+[ ! -f "$root/version.txt" ] || set -- --volume "$root/version.txt:$root/version.txt:ro" "$@"
 
 status=0
 "$docker" run "$@" || status=$?

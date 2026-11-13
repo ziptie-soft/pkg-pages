@@ -70,6 +70,7 @@ has_args() {
     has_args --volume "$TMP/work:$TMP/work"
     has_args --workdir "$TMP/work"
     has_args --volume "$LIB:$LIB:ro"
+    has_args --volume "$ROOT/version.txt:$ROOT/version.txt:ro"
     image="$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")"
     has_args "$image" sh
     has_args sh "$LIB/in-container.sh"
