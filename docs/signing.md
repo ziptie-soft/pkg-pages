@@ -6,6 +6,9 @@ notice, and you can start signing at any release.
 
 ## Model
 
+The optional Nix flake is not covered by OpenPGP signing; its referenced archives are pinned by
+SHA-256.
+
 - **One key per project.** With a primary key shared across projects, every project's pin would
   accept every project's subkeys, so one leaked CI secret could sign packages that the other
   projects' users accept.

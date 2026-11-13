@@ -49,6 +49,8 @@ signed APT and DNF repositories on GitHub Pages. It should:
     <name>.repo            baseurl=<base-url>/rpm/$basearch, gpgcheck=1, repo_gpgcheck=1, gpgkey=
     <arch>/                the .rpm files (noarch copied into each)
       repodata/repomd.xml, repomd.xml.asc, ...
+  nix/                     optional hash-pinned flake for prebuilt release tarballs
+    flake.tar.gz, flake.nix, flake.lock
   every directory: index.html listing (Pages serves none)
 ```
 
@@ -224,6 +226,12 @@ bandwidth. Pages must deploy from GitHub Actions (`build_type: workflow`).
   with the current subkey is expected, and documented as a difference from their release-page
   copies.
 - **D8. Apache-2.0**, like the rest of ziptie-soft.
+- **D9. Optional Nix flakes install prebuilt archives.** Each archive URL and SHA-256 is written
+  into an unsigned flake; the action never builds binaries. The key-holding publish job only lists
+  and hashes the archives, without extracting or running them. Only the current release is
+  included. Static or musl binaries are recommended because glibc binaries may need patching on
+  NixOS. A binary cache would add a secret and consume GitHub Pages' 1 GB site limit, while
+  signing it adds no trust for imported tarballs.
 
 ## Open questions
 
