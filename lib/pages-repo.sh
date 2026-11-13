@@ -30,6 +30,7 @@
 #   --public-key FILE       the pin; required when signing, published as <name>.asc
 #   --directory-listings true|false  an index.html in every directory (default true)
 #   --footer true|false     add a pkg-pages footer to the landing page and listings (default true)
+#   --footer-version V      the pkg-pages version the footer names (default: version.txt beside lib/)
 #   --packslip-project PROJECT  show packslip and mise install commands for this project (default off)
 #   --packslip-pin PIN      optional packslip signer pin (ps1_ followed by 26 base32 characters)
 #   --extra-site DIR        merged into the site root; may not overwrite a file of the site
@@ -61,7 +62,7 @@ usage() {
 }
 
 packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
-suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true
+suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true footer_version=''
 nix_archives='' nix_binaries='' nix_url_base=''
 packslip_project='' packslip_pin='' extra='' import_key=false
 while [ "$#" -gt 0 ]; do
@@ -85,6 +86,7 @@ while [ "$#" -gt 0 ]; do
         --public-key) pin="$2" ;;
         --directory-listings) listings="$2" ;;
         --footer) footer="$2" ;;
+        --footer-version) footer_version="$2" ;;
         --packslip-project) packslip_project="$2" ;;
         --packslip-pin) packslip_pin="$2" ;;
         --extra-site) extra="$2" ;;
@@ -105,6 +107,9 @@ check_word suite "$suite"
 check_word component "$component"
 check_bool directory-listings "$listings"
 check_bool footer "$footer"
+case "$footer_version" in
+    *[!A-Za-z0-9.+-]*) die "footer-version must match [A-Za-z0-9.+-]*, not '$footer_version'" ;;
+esac
 case "$version" in
     '' | *[!A-Za-z0-9.+~_-]*) die "version must match [A-Za-z0-9.+~_-]+, not '$version'" ;;
 esac
@@ -468,8 +473,7 @@ h_base="$(esc "$base_url")"
 h_names="$(esc "$names")"
 h_packslip_project="$(esc "$packslip_project")"
 h_packslip_pin="$(esc "$packslip_pin")"
-footer_version=''
-if [ -f "$lib/../version.txt" ]; then
+if [ -z "$footer_version" ] && [ -f "$lib/../version.txt" ]; then
     IFS= read -r footer_version < "$lib/../version.txt" || true
     footer_version="$(printf '%s' "$footer_version" | tr -d '[:space:]')"
     case "$footer_version" in '' | *[!A-Za-z0-9.+-]*) footer_version='' ;; esac
