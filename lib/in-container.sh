@@ -2,6 +2,8 @@
 # The entry point of every container that run.sh starts (docker mode). Not meant to be run by
 # hand. It installs the tools of PKG_PAGES_TOOLS, runs COMMAND, then gives the paths of
 # PKG_PAGES_WRITES back to PKG_PAGES_OWNER (uid:gid), since the container runs as root.
+# REPO_SIGNING_KEY is taken out of the environment while the tools are installed, and given
+# back to COMMAND only.
 #
 # Usage (inside the container): in-container.sh COMMAND [ARG]...
 set -eu
@@ -36,6 +38,15 @@ package_for() {
     esac
 }
 
+# The signing key is for COMMAND only: the package manager and the maintainer scripts it runs
+# never see it in their environment.
+key_set=false
+if [ -n "${REPO_SIGNING_KEY+set}" ]; then
+    key_set=true
+    signing_key="$REPO_SIGNING_KEY"
+    unset REPO_SIGNING_KEY
+fi
+
 # Only what is missing, so images that already have a tool skip the package manager.
 pkgs=
 manager=
@@ -57,6 +68,12 @@ if [ -n "$pkgs" ]; then
             ;;
         dnf) dnf install -y -q $pkgs >&2 ;;
     esac
+fi
+
+if [ "$key_set" = true ]; then
+    REPO_SIGNING_KEY="$signing_key"
+    export REPO_SIGNING_KEY
+    unset signing_key
 fi
 
 status=0
