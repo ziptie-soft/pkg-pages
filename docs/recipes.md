@@ -19,6 +19,18 @@ those runs, so also allow the tags (the tag rulesets of
 gh api -X POST repos/<owner>/<repo>/environments/linux-signing/deployment-branch-policies -f name='v*' -f type=tag
 ```
 
+## Packslip and mise
+
+The reusable workflow can add CLI install commands to the Pages landing page when the caller
+publishes a packslip bundle on its GitHub release. Set `packslip: true`; set `packslip-pin` as
+well when you want the command pinned to a signer. See [jdx/packslip's GitHub Actions guide](https://packslip.dev/docs/actions/)
+for producing and publishing the bundle.
+
+```yaml
+    with:
+      packslip: true
+```
+
 ## Building and publishing, unsigned
 
 The starting point: build `.deb` and `.rpm` packages on two architectures, publish unsigned

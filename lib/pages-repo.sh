@@ -28,6 +28,8 @@
 #   --public-key FILE       the pin; required when signing, published as <name>.asc
 #   --directory-listings true|false  an index.html in every directory (default true)
 #   --footer true|false     add a pkg-pages footer to the landing page and listings (default true)
+#   --packslip-project PROJECT  show packslip and mise install commands for this project (default off)
+#   --packslip-pin PIN      optional packslip signer pin (ps1_ followed by 26 base32 characters)
 #   --extra-site DIR        merged into the site root; may not overwrite a file of the site
 #   --import-key true|false first import REPO_SIGNING_KEY into GNUPGHOME, failing closed against
 #                           --public-key, as `linux-signing.sh import` does (default false)
@@ -57,7 +59,8 @@ usage() {
 }
 
 packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
-suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true extra='' import_key=false
+suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true
+packslip_project='' packslip_pin='' extra='' import_key=false
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || usage
     case "$1" in
@@ -76,6 +79,8 @@ while [ "$#" -gt 0 ]; do
         --public-key) pin="$2" ;;
         --directory-listings) listings="$2" ;;
         --footer) footer="$2" ;;
+        --packslip-project) packslip_project="$2" ;;
+        --packslip-pin) packslip_pin="$2" ;;
         --extra-site) extra="$2" ;;
         --import-key) import_key="$2" ;;
         *) usage ;;
@@ -101,6 +106,21 @@ for a in $deb_archs; do check_word deb-architectures "$a"; done
 for a in $rpm_archs; do check_word rpm-architectures "$a"; done
 [ -z "$homepage" ] || check_url homepage "$homepage"
 [ -z "$extra" ] || [ -d "$extra" ] || die "extra-site $extra is not a directory"
+case "$packslip_project$packslip_pin" in
+    *[[:cntrl:]]*) die "packslip inputs may not contain control characters" ;;
+esac
+[ -z "$packslip_pin" ] || [ -n "$packslip_project" ] || die "--packslip-pin needs --packslip-project"
+if [ -n "$packslip_project" ]; then
+    printf '%s\n' "$packslip_project" | LC_ALL=C grep -Eq '^[a-z0-9.-]+(/[A-Za-z0-9._-]+)+$' ||
+        die "packslip-project must match [a-z0-9.-]+(/[A-Za-z0-9._-]+)+, not '$packslip_project'"
+    case "$packslip_project" in
+        */../* | ../* | */.. | ..) die "packslip-project may not contain a '..' path segment" ;;
+    esac
+fi
+if [ -n "$packslip_pin" ]; then
+    printf '%s\n' "$packslip_pin" | LC_ALL=C grep -Eq '^ps1_[a-z2-7]{26}$' ||
+        die "packslip-pin must match ps1_ followed by 26 lowercase base32 characters"
+fi
 [ -n "$title" ] || title="$name package repositories"
 require_tools gzip sed awk find sha256sum sort
 
@@ -329,6 +349,7 @@ page_head() {
       .card-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
       .card h2 { margin: 0; }
       .cmd { margin: .75rem 0 0; }
+      .note { margin: .6rem 0 0; color: var(--muted); font-size: .9rem; }
       pre {
         margin: 0; padding: 1rem; overflow-x: auto;
         border: 1px solid var(--border); border-radius: 8px; background: var(--code);
@@ -407,6 +428,8 @@ h_title="$(esc "$title")"
 h_name="$(esc "$name")"
 h_base="$(esc "$base_url")"
 h_names="$(esc "$names")"
+h_packslip_project="$(esc "$packslip_project")"
+h_packslip_pin="$(esc "$packslip_pin")"
 footer_version=''
 if [ -f "$lib/../version.txt" ]; then
     IFS= read -r footer_version < "$lib/../version.txt" || true
@@ -446,6 +469,14 @@ h_footer_version=''
         fi
         printf 'sudo curl -fsSLo /etc/apt/sources.list.d/%s.list %s/deb/%s.list\n' "$h_name" "$h_base" "$h_name"
         printf 'sudo apt update\nsudo apt install %s</pre></div>\n' "$h_names"
+        printf '    </section>\n'
+    fi
+    if [ -n "$packslip_project" ]; then
+        printf '    <section class="card">\n      <div class="card-head"><h2>packslip and mise (CLI only)</h2><button type="button" class="copy">Copy</button></div>\n'
+        printf '      <div class="cmd"><pre>packslip install %s' "$h_packslip_project"
+        [ -z "$packslip_pin" ] || printf ' --pin %s' "$h_packslip_pin"
+        printf '\nmise use -g packslip:%s</pre></div>\n' "$h_packslip_project"
+        printf '      <p class="note">Installs the release\047s signed packslip bundle from the GitHub release; packslip checks the signature before it installs.</p>\n'
         printf '    </section>\n'
     fi
     printf '    <div class="browse-row"><span>Browse:</span><nav class="browse" aria-label="Browse repositories">'

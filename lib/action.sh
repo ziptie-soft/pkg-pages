@@ -131,6 +131,8 @@ build_repo() {
         --public-key "$pin" \
         --directory-listings "${listings:-true}" \
         --footer "${footer:-true}" \
+        --packslip-project "$(input PACKSLIP_PROJECT)" \
+        --packslip-pin "$(input PACKSLIP_PIN)" \
         --extra-site "$extra"
 }
 
