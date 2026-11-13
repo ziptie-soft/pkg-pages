@@ -25,6 +25,12 @@ signed APT and DNF repositories on GitHub Pages. It should:
 - **Hosting anywhere but GitHub Pages**, and source packages (`.dsc`, `.src.rpm`).
 - **Signing `.deb` files.** APT never checks them: `dpkg-sig` and `debsigs` are off by default.
   The signed `InRelease` covers every `.deb` by its SHA-256.
+- **Hosting packslip bundles on Pages.** A GitHub project discovers `packslip.sigstore.json` among
+  its release assets, while a domain project needs a signed list at the host root under
+  `/.well-known/packslip/`; project Pages paths cannot serve that location. Lists expire after
+  30 days by default and need scheduled OIDC re-signing, and each bundle must name the domain
+  project. For now the page advertises the caller's release install; a custom-domain release list
+  may be future work.
 
 ## Published layout
 

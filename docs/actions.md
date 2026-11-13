@@ -32,7 +32,9 @@ Builds the site described in [design.md#published-layout](design.md#published-la
 
 1. Defaults: `name` is the repository name, lowercased, with `_` turned into `-`. `base-url` is
    `https://<owner, lowercased>.github.io/<repo>`, or `https://<owner>.github.io` for a
-   `<owner>.github.io` repository. `homepage` is the repository URL.
+   `<owner>.github.io` repository. `homepage` is the repository URL. `packslip-project` and
+   `packslip-pin` default to empty; a non-empty project adds the CLI-only packslip and mise card,
+   and a pin is allowed only with a project.
 2. Every file under `packages`, recursively, must be a `.deb` or a binary `.rpm`. Name, version
    and architecture come from `dpkg-deb -f` and `rpm -qp`; file names don't matter. The same
    package twice is fine if the bytes match and an error if they don't.
@@ -57,7 +59,8 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    `rpm/<name>.repo`, the landing page (install commands for every package of `version`, and
    every caller string HTML-escaped), `.nojekyll`, directory listings and, by default, a footer
    linking to pkg-pages (`footer: false` opts out). Then it merges `extra-site`, which may not
-   overwrite a file of the site or contain symbolic links.
+   overwrite a file of the site or contain symbolic links. `packslip-project` adds commands for
+   the caller-published release bundle; `packslip-pin` adds its optional signer pin.
 9. Self-check: the required files exist, each required Debian architecture's `Packages` lists
    `version`, and, when signed, `InRelease`, `Release.gpg`, every `repomd.xml.asc` and every
    `.rpm` verify against the pin.
@@ -171,7 +174,8 @@ versions against the crate. See [building.md](building.md). Its output paths are
    `install-tests: '[]'` skips the job.
 3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
    skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`. The `footer` input
-   controls the small pkg-pages footer (default true).
+   controls the small pkg-pages footer (default true). `packslip` opts in to the install card for
+   `github.com/<caller repository>`; `packslip-pin` optionally pins its signer.
 4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
    (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Merges
    `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.
@@ -222,6 +226,8 @@ packages:
     rpm-architectures: x86_64 aarch64
     description: What these packages are, in one line
     footer: true
+    packslip: false # opt in to commands for github.com/<this repository>
+    packslip-pin: '' # optional ps1_ signer pin
     install-tests: >-
       [{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"},
        {"distro":"ubuntu","arch":"x86_64"},{"distro":"fedora","arch":"aarch64"},

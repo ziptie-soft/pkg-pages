@@ -338,6 +338,66 @@ apt_only() {
     grep -q 'These repositories are unsigned' "$i"
 }
 
+@test "packslip commands are absent by default" {
+    need_deb
+    pkgs deb
+    build
+    assert_status 0
+    refute grep -qi 'packslip' "$TMP/site/index.html"
+}
+
+@test "packslip card shows packslip and mise commands, with an optional signer pin" {
+    need_deb
+    pkgs deb
+    project=github.com/Owner/Repo
+    build --packslip-project "$project"
+    assert_status 0
+    i="$TMP/site/index.html"
+    grep -q '<h2>packslip and mise (CLI only)</h2><button type="button" class="copy">Copy</button>' "$i"
+    grep -q "packslip install $project" "$i"
+    grep -q "mise use -g packslip:$project" "$i"
+    refute grep -q 'packslip install .*--pin' "$i"
+    grep -q "Installs the release's signed packslip bundle from the GitHub release; packslip checks the signature before it installs." "$i"
+    rm -rf "$TMP/site"
+    pin=ps1_4yd5vxao3lfzaox72lynxuotke
+    build --packslip-project "$project" --packslip-pin "$pin"
+    assert_status 0
+    grep -q "packslip install $project --pin $pin" "$TMP/site/index.html"
+    grep -q "mise use -g packslip:$project" "$TMP/site/index.html"
+}
+
+@test "packslip card escapes caller strings" {
+    need_deb
+    pkgs deb
+    build --packslip-project github.com/Owner/Repo --title 'A <b> & c'
+    assert_status 0
+    grep -q 'A &lt;b&gt; &amp; c' "$TMP/site/index.html"
+    grep -q 'packslip install github.com/Owner/Repo' "$TMP/site/index.html"
+}
+
+@test "packslip project and pin inputs are validated" {
+    need_deb
+    pkgs deb
+    for project in \
+        'github.com/owner/my repo' 'github.com/owner/"repo"' 'github.com/owner/<repo>' \
+        'github.com/owner/>repo<' 'github.com/owner/repo&x' 'github.com/owner/..' \
+        $'github.com/owner/repo\nextra'; do
+        build --packslip-project "$project"
+        assert_status 1
+        refute [ -e "$TMP/site" ]
+    done
+    for pin in \
+        'bad_4yd5vxao3lfzaox72lynxuotke' 'ps1_4yd5vxao3lfzaox72lynxuotk' \
+        'ps1_4yd5vxao3lfzaox72lynxuotkE' $'ps1_4yd5vxao3lfzaox72lynxuotke\nextra'; do
+        build --packslip-project github.com/owner/repo --packslip-pin "$pin"
+        assert_status 1
+        refute [ -e "$TMP/site" ]
+    done
+    build --packslip-pin ps1_4yd5vxao3lfzaox72lynxuotke
+    assert_status 1
+    refute [ -e "$TMP/site" ]
+}
+
 @test "extra-site is merged into the root" {
     need_deb
     pkgs deb

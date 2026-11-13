@@ -68,7 +68,8 @@ build_repo() {
 @test "build-repo passes the caller's values through" {
     export INPUT_NAME=hello INPUT_BASE_URL=https://pkgs.example.com INPUT_SUITE=trixie \
         INPUT_COMPONENT=contrib INPUT_TITLE='T <x>' INPUT_DEB_ARCHITECTURES='amd64 arm64' \
-        INPUT_OUT=public INPUT_DIRECTORY_LISTINGS=false INPUT_FOOTER=false
+        INPUT_OUT=public INPUT_DIRECTORY_LISTINGS=false INPUT_FOOTER=false \
+        INPUT_PACKSLIP_PROJECT=github.com/Owner/Repo INPUT_PACKSLIP_PIN=ps1_4yd5vxao3lfzaox72lynxuotke
     build_repo
     assert_status 0
     [ "$(arg_after --name)" = hello ]
@@ -78,6 +79,8 @@ build_repo() {
     [ "$(arg_after --deb-architectures)" = 'amd64 arm64' ]
     [ "$(arg_after --out)" = public ]
     [ "$(arg_after --footer)" = false ]
+    [ "$(arg_after --packslip-project)" = github.com/Owner/Repo ]
+    [ "$(arg_after --packslip-pin)" = ps1_4yd5vxao3lfzaox72lynxuotke ]
     [ "$(writes)" = public ]
 }
 

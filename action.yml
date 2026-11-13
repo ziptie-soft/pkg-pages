@@ -84,6 +84,16 @@ inputs:
     description: Add a small footer linking to pkg-pages to the landing page and directory listings.
     required: false
     default: 'true'
+  packslip-project:
+    description: >-
+      packslip project the landing page shows install commands for, e.g. github.com/OWNER/REPO;
+      empty: no packslip section.
+    required: false
+    default: ''
+  packslip-pin:
+    description: Optional ps1_ signer pin added to the packslip command.
+    required: false
+    default: ''
   extra-site:
     description: Optional directory merged into the site root (docs, badges); it may not overwrite repository files.
     required: false
@@ -147,6 +157,8 @@ runs:
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
         INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
         INPUT_FOOTER: ${{ inputs.footer }}
+        INPUT_PACKSLIP_PROJECT: ${{ inputs.packslip-project }}
+        INPUT_PACKSLIP_PIN: ${{ inputs.packslip-pin }}
         INPUT_EXTRA_SITE: ${{ inputs.extra-site }}
         INPUT_OUT: ${{ inputs.out }}
         INPUT_UPLOAD: ${{ inputs.upload }}
