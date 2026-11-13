@@ -136,6 +136,13 @@ on:
         default: |
           *.deb
           *.rpm
+      resign-history:
+        description: >-
+          Re-sign earlier releases' .rpm files that don't verify against public-key, with a
+          warning for each (true), or fail on them (false).
+        required: false
+        type: boolean
+        default: true
       install-tests:
         description: >-
           JSON list of {"distro": "fedora|debian|ubuntu|<image@digest>", "arch":
@@ -527,6 +534,7 @@ jobs:
           nix-binaries: ${{ inputs.nix-binaries }}
           nix-url-base: ${{ steps.nix.outputs.url-base }}
           public-key: pkg-pages/public-key/repo.asc
+          resign-history: ${{ inputs.resign-history }}
           signing-key: ${{ secrets.signing-key }}
           out: pkg-pages/site
           artifact-name: ${{ inputs.artifact-prefix }}-site

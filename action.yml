@@ -89,6 +89,12 @@ inputs:
     description: Armored secret signing subkey without a passphrase. Pass a secret; never log it.
     required: false
     default: ''
+  resign-history:
+    description: >-
+      Re-sign earlier releases' .rpm files that don't verify against public-key, with a warning
+      for each (true), or fail on them (false). This release's packages are always signed.
+    required: false
+    default: 'true'
   directory-listings:
     description: Write an index.html into every directory (Pages serves no listings of its own).
     required: false
@@ -177,6 +183,7 @@ runs:
         INPUT_NIX_BINARIES: ${{ inputs.nix-binaries }}
         INPUT_NIX_URL_BASE: ${{ inputs.nix-url-base }}
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_RESIGN_HISTORY: ${{ inputs.resign-history }}
         INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
         INPUT_FOOTER: ${{ inputs.footer }}
         INPUT_FOOTER_VERSION: ${{ inputs.footer-version }}
