@@ -10,7 +10,7 @@
 #   --packages DIR          every .deb and .rpm the site publishes (searched recursively); any
 #                           other file is an error
 #   --out DIR               the site directory to create; it must not exist
-#   --base-url URL          where OUT is served: https://... or file:///...
+#   --base-url URL          where OUT is served: https://... or file:///..., letters, digits and . _ ~ : / % + @ = , - only
 #   --version VERSION       the release; a package of it must be among the packages
 #   --name NAME             base name of <name>.asc, deb/<name>.list, rpm/<name>.repo
 # Optional:
@@ -101,7 +101,7 @@ check_bool import-key "$import_key"
 [ -n "$packages" ] && [ -n "$out" ] && [ -n "$base_url" ] && [ -n "$version" ] && [ -n "$name" ] || usage
 [ -d "$packages" ] || die "packages $packages is not a directory"
 [ ! -e "$out" ] && [ ! -L "$out" ] || die "out $out already exists"
-check_url base-url "$base_url"
+check_base_url base-url "$base_url"
 check_name name "$name"
 check_word suite "$suite"
 check_word component "$component"
