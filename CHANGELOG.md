@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0](https://github.com/ziptie-soft/pkg-pages/compare/v1.0.0...v1.1.0) (2026-11-13)
+
+
+### Features
+
+* **build-repo:** add a footer linking to pkg-pages, with an opt-out input ([9705abd](https://github.com/ziptie-soft/pkg-pages/commit/9705abdc5ce056f29ad444b8727c2d6955bf4243))
+* **build-repo:** advertise a packslip install on the landing page ([29df73a](https://github.com/ziptie-soft/pkg-pages/commit/29df73a6c387cc30e0fca795f7869e66aa7e69d1))
+* **build-repo:** restyle the landing page and directory listings, with a light/dark theme ([0112515](https://github.com/ziptie-soft/pkg-pages/commit/01125158e8881fea9d51554261c1fb08d816cdc5))
+* **nix:** publish a hash-pinned flake of the release's prebuilt tarballs ([2c21166](https://github.com/ziptie-soft/pkg-pages/commit/2c2116608d72680f057c27e437d8100d8af3e2e8))
+
 ## 1.0.0 (2026-11-12)
 
 
