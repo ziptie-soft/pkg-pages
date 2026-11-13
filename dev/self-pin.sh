@@ -6,11 +6,14 @@
 #   dev/self-pin.sh SHA VERSION [FILE]
 #       Rewrite every `uses: ziptie-soft/pkg-pages[/<action>]@<sha> # vX.Y.Z pkg-pages self-pin`
 #       line of FILE (default .github/workflows/publish.yml) to `@SHA # vVERSION pkg-pages
-#       self-pin`. SHA must be a full commit SHA, VERSION X.Y.Z.
+#       self-pin`, and every `footer-version: X.Y.Z # pkg-pages self-pin` line to VERSION (the
+#       actions at SHA predate the release commit, so their version.txt names the previous
+#       release). SHA must be a full commit SHA, VERSION X.Y.Z.
 #   dev/self-pin.sh --check [REV] [FILE]
 #       Fail unless every self reference of FILE (as it is at REV, default HEAD) uses the same
 #       commit W, W is an ancestor of REV, and the actions, lib/ and images.env are identical in
-#       W and REV, so what a caller pinning REV runs is exactly what REV contains.
+#       W and REV, so what a caller pinning REV runs is exactly what REV contains; and unless
+#       every pin comment and footer-version line names one version, version.txt's at REV.
 #   dev/self-pin.sh -C DIR ...
 #       Work on the checkout in DIR instead of the one this script is in. release.yml runs the
 #       script from the trusted master commit on the release PR's checkout, so nothing from
@@ -34,6 +37,7 @@ else
 fi
 
 refs='uses:[[:space:]]*ziptie-soft/pkg-pages(/[A-Za-z0-9._/-]+)?@'
+fver='footer-version:[[:space:]]*'
 
 if [ "${1:-}" = --check ]; then
     rev="${2:-HEAD}"
@@ -50,6 +54,20 @@ if [ "${1:-}" = --check ]; then
     w="$shas"
     git cat-file -e "$w^{commit}" 2> /dev/null || die "the pinned commit $w is not in this repository"
     git merge-base --is-ancestor "$w" "$rev" || die "the pinned commit $w is not an ancestor of $rev"
+    # The release version: every pin comment and footer-version line, and version.txt.
+    fvers="$(printf '%s\n' "$content" | grep -E "$fver" || true)"
+    [ -n "$fvers" ] || die "$file has no 'footer-version: X.Y.Z # pkg-pages self-pin' line at $rev"
+    if printf '%s\n' "$fvers" | grep -vqE "${fver}[0-9]+\.[0-9]+\.[0-9]+ # pkg-pages self-pin\$"; then
+        printf '%s\n' "$fvers" | grep -vE "${fver}[0-9]+\.[0-9]+\.[0-9]+ # pkg-pages self-pin\$" >&2
+        die "the footer-version lines above lack 'X.Y.Z # pkg-pages self-pin'"
+    fi
+    versions="$({
+        printf '%s\n' "$lines" | sed -E 's/.* # v([^ ]+) pkg-pages self-pin$/\1/'
+        printf '%s\n' "$fvers" | sed -E "s/.*$fver([^ ]+) # pkg-pages self-pin\$/\1/"
+        git show "$rev:version.txt" 2> /dev/null | tr -d '[:space:]' && echo
+    } | sed '/^$/d' | sort -u)"
+    [ "$(printf '%s\n' "$versions" | wc -l)" -eq 1 ] ||
+        die "the pin comments, footer-version and version.txt name several versions: $(echo "$versions" | tr '\n' ' ')"
     # Every action.yml of either commit, lib/ and images.env.
     paths="action.yml lib images.env"
     for c in "$w" "$rev"; do
@@ -80,7 +98,8 @@ if grep -E "$refs" "$file" | grep -vqE ' # v[^ ]+ pkg-pages self-pin$'; then
 fi
 grep -qE "$refs" "$file" || die "$file has no self references"
 tmp="$(mktemp)"
-sed -E "s|($refs)[^ ]+ # v[^ ]+ pkg-pages self-pin\$|\1$sha # v$version pkg-pages self-pin|" "$file" > "$tmp"
+sed -E -e "s|($refs)[^ ]+ # v[^ ]+ pkg-pages self-pin\$|\1$sha # v$version pkg-pages self-pin|" \
+    -e "s|($fver)[^ ]+ # pkg-pages self-pin\$|\1$version # pkg-pages self-pin|" "$file" > "$tmp"
 cat "$tmp" > "$file"
 rm -f "$tmp"
 echo "pinned $(grep -cE "$refs" "$file") self reference(s) in $file to $sha (v$version)"

@@ -38,11 +38,13 @@ its own SHA. So a release is two commits on top of **W**, the `master` commit it
 1. release-please's release commit (changelog, version), and
 2. a pin commit, `chore(release): pin publish.yml to <W>`, that points every
    `ziptie-soft/pkg-pages/<action>@…` line of `publish.yml` (those marked
-   `# vX.Y.Z pkg-pages self-pin`) at W.
+   `# vX.Y.Z pkg-pages self-pin`) at W, and sets the `footer-version: X.Y.Z # pkg-pages self-pin`
+   line to the release version.
 
 The tag **X** is the second one. A caller pinning X gets `publish.yml`@X → actions@W. Both are
 immutable, and the actions, `lib/` and `images.env` in X and W are identical, so X's own actions
-are W's too.
+are W's too. Only `version.txt` differs: W's still names the previous release, so `publish.yml`
+passes the release version to the landing page footer itself.
 
 `release.yml` does this by itself:
 
@@ -53,7 +55,8 @@ are W's too.
 - Merge the release PR with **rebase**, so both commits land on `master` unchanged.
 - After the release is created, `check-release` runs `dev/self-pin.sh --check` on the tagged
   commit: every self reference points at one commit, an ancestor whose actions, `lib/` and
-  `images.env` are identical. A failure means the release must be replaced by a fix release.
+  `images.env` are identical, and the pin comments, `footer-version` and `version.txt` name one
+  version. A failure means the release must be replaced by a fix release.
 
 ### Refreshing the Nix lock
 

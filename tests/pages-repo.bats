@@ -266,6 +266,15 @@ apt_only() {
     grep -qF "pkg-pages</a> $v" "$TMP/site/index.html"
     grep -q 'ziptie-soft/pkg-pages' "$TMP/site/deb/index.html"
     rm -rf "$TMP/site"
+    # publish.yml names the release, which its pinned actions' version.txt predates.
+    build --footer-version 9.8.7
+    assert_status 0
+    grep -qF "pkg-pages</a> 9.8.7</footer>" "$TMP/site/index.html"
+    rm -rf "$TMP/site"
+    build --footer-version '1.0<b>'
+    assert_status 1
+    assert_output_contains "footer-version must match"
+    rm -rf "$TMP/site"
     build --footer false
     assert_status 0
     refute grep -q '<footer' "$TMP/site/index.html"
