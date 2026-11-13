@@ -233,7 +233,7 @@ selfpin_repo() {
     assert_output_contains "several commits"
 }
 
-@test "self-pin -C: the script from one checkout works on another (release.yml's trusted copy)" {
+@test "self-pin -C: the script from one checkout works on another" {
     selfpin_repo
     rm dev/self-pin.sh
     git commit -qam 'chore: no script on this branch'
