@@ -342,7 +342,7 @@ page_head() {
       }
       * { box-sizing: border-box; }
       body {
-        max-width: 48rem; margin: 0 auto; padding: 2rem 1.25rem;
+        max-width: 80rem; margin: 0 auto; padding: clamp(1rem, 3vw, 2.5rem) clamp(.75rem, 4vw, 3rem);
         background: var(--bg); color: var(--fg);
         font: 1rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       }
@@ -368,17 +368,21 @@ page_head() {
       .signed { color: var(--signed-fg); background: var(--signed-bg); border-color: var(--signed-border); }
       .unsigned { color: var(--unsigned-fg); background: var(--unsigned-bg); border-color: var(--unsigned-border); }
       h2 { margin: 1.5rem 0 .6rem; font-size: 1.2rem; }
-      .card { padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+      .card { padding: clamp(.75rem, 2vw, 1.25rem); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
       .card + .card { margin-top: 1rem; }
       .card-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
       .card h2 { margin: 0; }
       .cmd { margin: .75rem 0 0; }
       .note { margin: .6rem 0 0; color: var(--muted); font-size: .9rem; }
+      /* Long commands wrap (at spaces first) instead of scrolling; a wrapped command's
+         continuation is indented. Copy still copies the commands as written. */
       pre {
-        margin: 0; padding: 1rem; overflow-x: auto;
+        margin: 0; padding: clamp(.6rem, 2vw, 1rem); white-space: pre-wrap; overflow-wrap: break-word;
         border: 1px solid var(--border); border-radius: 8px; background: var(--code);
         font: .88rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
+      .ln { display: block; padding-left: 2ch; text-indent: -2ch; }
+      @media (max-width: 40rem) { pre { font-size: .8rem; } }
       .copy { cursor: pointer; }
       code { word-break: break-all; }
       .fpr {
@@ -425,9 +429,19 @@ page_head() {
           document.querySelectorAll('.card').forEach(function (card) {
             var button = card.querySelector('.copy');
             var pre = card.querySelector('.cmd pre');
-            if (!navigator.clipboard || !button || !pre) { if (button) button.hidden = true; return; }
+            if (!pre) return;
+            var text = pre.textContent;
+            // One block per command, so a wrapped command's continuation can be indented.
+            pre.textContent = '';
+            text.split('\n').forEach(function (line) {
+              var span = document.createElement('span');
+              span.className = 'ln';
+              span.textContent = line;
+              pre.appendChild(span);
+            });
+            if (!navigator.clipboard || !button) { if (button) button.hidden = true; return; }
             button.addEventListener('click', function () {
-              navigator.clipboard.writeText(pre.textContent).then(function () {
+              navigator.clipboard.writeText(text).then(function () {
                 button.textContent = 'Copied';
                 setTimeout(function () { button.textContent = 'Copy'; }, 1500);
               }).catch(function () {});
