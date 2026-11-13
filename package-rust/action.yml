@@ -53,10 +53,12 @@ inputs:
 
 outputs:
   deb:
-    description: Path of the .deb (relative to working-directory), empty when not built.
+    description: >-
+      Space-separated paths of the .deb files (relative to working-directory), empty when not built.
     value: ${{ steps.run.outputs.deb }}
   rpm:
-    description: Path of the .rpm (relative to working-directory), empty when not built.
+    description: >-
+      Space-separated paths of the .rpm files (relative to working-directory), empty when not built.
     value: ${{ steps.run.outputs.rpm }}
   deb-arch:
     description: Debian architecture of the .deb (amd64, arm64, ...).
