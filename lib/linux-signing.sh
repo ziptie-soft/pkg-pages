@@ -28,6 +28,10 @@ lib="$(cd "$(dirname "$0")" && pwd)"
 . "$lib/common.sh"
 # shellcheck source=signing.sh
 . "$lib/signing.sh"
+# The key is for signing_import alone, which reads the shell variable: no tool this script runs,
+# the package readers included, gets it in its environment.
+signing_key="${REPO_SIGNING_KEY-}"
+unset REPO_SIGNING_KEY
 
 usage() {
     die "usage: $0 [--pin FILE] import | sign-rpm FILE... | check-rpm [--allow-unsigned] FILE..."
@@ -69,13 +73,13 @@ case "$cmd" in
     import)
         [ "$#" -eq 0 ] || usage
         require_tools gpg
-        fpr="$(signing_import "$pin")"
+        fpr="$(REPO_SIGNING_KEY="$signing_key"; signing_import "$pin")"
         report_import "$fpr"
         ;;
     sign-rpm)
         need_files "$@"
         require_tools gpg
-        fpr="$(signing_import "$pin")"
+        fpr="$(REPO_SIGNING_KEY="$signing_key"; signing_import "$pin")"
         report_import "$fpr"
         if [ -n "$fpr" ]; then
             sign_rpm "$pin" "$@"
