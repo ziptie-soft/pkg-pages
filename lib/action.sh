@@ -41,6 +41,7 @@ expand_files() {
         IFS=
         for _f in $_p; do
             [ -f "$_f" ] || continue
+            check_relpath packages "$_f"
             printf '%s\n' "$_f"
             _n=$((_n + 1))
         done

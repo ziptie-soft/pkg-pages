@@ -167,6 +167,14 @@ dist/none-*.rpm'
     done
 }
 
+@test "packages globs that expand outside the checkout are refused" {
+    touch "$TMP/x.rpm"
+    export INPUT_PACKAGES='.*/x.rpm'
+    run "$LIB/action.sh" sign-rpm
+    assert_status 1
+    [ ! -e "$TMP/docker.args" ]
+}
+
 @test "check-rpm: allow-unsigned true (default) passes --allow-unsigned, false doesn't" {
     touch x.rpm
     export INPUT_PACKAGES=x.rpm
