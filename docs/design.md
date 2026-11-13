@@ -121,6 +121,12 @@ Assets: the signing subkey, the caller's users' trust in the pin, the Pages depl
   that runs.
 - **Untrusted inputs.** Inputs reach `run:` only through `env:`. Names, paths and URLs are
   validated. The landing page HTML-escapes every caller string.
+- **History is trusted as published.** `fetch-history` republishes the assets of earlier GitHub
+  releases, and the site is signed over them: `.rpm` files that don't verify against the pin are
+  re-signed, and the signed `InRelease` lists every `.deb`. Whoever can publish or edit a release
+  of the caller's repository, including any workflow token with `contents: write`, can therefore
+  get packages signed. Turn on immutable releases and limit who can create tags
+  ([signing.md](signing.md#setting-up-a-project)).
 
 Threats out of scope: a compromised GitHub, a caller that keeps the key as a repository secret,
 and a malicious maintainer of the caller's repository.

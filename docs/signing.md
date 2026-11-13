@@ -75,7 +75,14 @@ subkey's. `ci-key` is [`tools/ci-key`](../tools/ci-key) from this repository.
    gh api -X POST repos/<owner>/<repo>/environments/linux-signing/deployment-branch-policies -f name='v*' -f type=tag
    ```
 
-4. Keep two things offline, separately: `<DIR>` (the primary's secret, passphrase-protected), and
+   Create the environment before the first run: GitHub creates a missing one on first use, with
+   no branch policy.
+
+4. Protect the earlier releases, which every site build republishes and signs: turn on immutable
+   releases (Settings → General → Releases), and add a tag ruleset that limits who can create
+   tags.
+
+5. Keep two things offline, separately: `<DIR>` (the primary's secret, passphrase-protected), and
    the revocation certificate gpg wrote to `<DIR>/openpgp-revocs.d/<FPR>.rev`, which revokes the
    whole key even if `<DIR>` is lost.
 
