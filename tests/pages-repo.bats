@@ -351,6 +351,9 @@ apt_only() {
     pkgs deb
     v() { run "$LIB/pages-repo.sh" --packages "$TMP/pkgs" --out "$TMP/site" --version 1.2.3 "$@"; assert_status 1; }
     v --base-url http://x --name hello
+    v --base-url 'https://x/a&b' --name hello
+    v --base-url 'https://x/a;b' --name hello
+    v --base-url 'https://x/?q' --name hello
     v --base-url https://x --name Hello
     v --base-url https://x --name hello --suite 'a b'
     v --base-url https://x --name hello --directory-listings yes

@@ -40,7 +40,8 @@ inputs:
   base-url:
     description: >-
       Where the site is served (https:// or file:///). Defaults to
-      https://<owner, lowercased>.github.io/<repo>.
+      https://<owner, lowercased>.github.io/<repo>. Letters, digits and . _ ~ : / % + @ = , - only:
+      the install commands use it unquoted.
     required: false
     default: ''
   suite:
