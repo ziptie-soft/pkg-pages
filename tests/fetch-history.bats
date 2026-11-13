@@ -69,6 +69,7 @@ release() { # release TAG PRERELEASE ASSET...
     tag="$1" pre="$2"
     shift 2
     echo "$tag $pre" >> "$FAKE_GH/releases"
+    mkdir -p "$(dirname "$FAKE_GH/assets/$tag")"
     : > "$FAKE_GH/assets/$tag"
     for a in "$@"; do echo "$a" >> "$FAKE_GH/assets/$tag"; done
 }
@@ -185,4 +186,52 @@ hello-*.rpm'
     fetch --repository 'not a repo'; assert_status 1
     fetch --patterns '../*.deb'; assert_status 1
     run "$LIB/fetch-history.sh"; assert_status 1
+}
+
+@test "two releases with an asset of the same name: both are kept" {
+    release v2.0.0 0 tool_amd64.deb
+    release v1.0.0 0 tool_amd64.deb
+    fetch
+    assert_status 0
+    [ "$(cat "$TMP/assets/tool_amd64.deb")" = v2.0.0 ]
+    [ "$(cat "$TMP/assets/v1.0.0_tool_amd64.deb")" = v1.0.0 ]
+}
+
+@test "an asset identical to an existing file is skipped" {
+    mkdir "$TMP/assets"
+    echo v1.0.0 > "$TMP/assets/a.deb"
+    release v1.0.0 0 a.deb
+    fetch
+    assert_status 0
+    [ "$(cat "$TMP/assets/a.deb")" = v1.0.0 ]
+    [ ! -e "$TMP/assets/v1.0.0_a.deb" ]
+}
+
+@test "an existing file is never replaced" {
+    mkdir "$TMP/assets"
+    echo mine > "$TMP/assets/a.deb"
+    release v1.0.0 0 a.deb
+    fetch
+    assert_status 0
+    [ "$(cat "$TMP/assets/a.deb")" = mine ]
+    [ "$(cat "$TMP/assets/v1.0.0_a.deb")" = v1.0.0 ]
+}
+
+@test "a tag's characters become _ in the stored name" {
+    release rel/2 0 t.deb
+    release rel/1 0 t.deb
+    fetch
+    assert_status 0
+    [ "$(cat "$TMP/assets/t.deb")" = rel/2 ]
+    [ "$(cat "$TMP/assets/rel_1_t.deb")" = rel/1 ]
+}
+
+@test "no place left for a differing asset is an error" {
+    mkdir "$TMP/assets"
+    echo mine > "$TMP/assets/a.deb"
+    echo other > "$TMP/assets/v1.0.0_a.deb"
+    release v1.0.0 0 a.deb
+    fetch
+    assert_status 1
+    [[ "$output" == *"differs from both"* ]]
 }

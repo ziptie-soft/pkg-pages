@@ -7,7 +7,7 @@ author: ziptie-soft
 
 inputs:
   dir:
-    description: Directory to download into (created if missing; existing files are kept).
+    description: Directory to download into (created if missing). Existing files are kept; an asset whose name a different file already has is stored as <tag>_<name>.
     required: true
   keep:
     description: How many published releases before the current one to fetch (0 = none).

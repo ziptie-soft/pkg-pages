@@ -136,10 +136,14 @@ it passes with a notice if `allow-unsigned` is `'true'` and fails otherwise.
 
 It lists the newest non-draft releases with `gh release list` (non-prerelease unless
 `include-prereleases`), skips `exclude-tag` and takes the first `keep`. Then
-`gh release download --skip-existing` fetches their assets matching `patterns` into `dir`. A
-release without matching assets is skipped with a notice. Any other failure is an error, because
-a silently shorter history would remove versions from the site. It needs `contents: read` on
-`repository`.
+`gh release download` fetches their assets matching `patterns` into `dir`. Existing files are
+kept: an asset identical to a file of that name is skipped, and one that differs is stored as
+`<tag>_<name>` (characters of the tag other than `A-Za-z0-9._-` become `_`), so no release's
+packages are dropped. A release without matching assets is skipped with a notice. Any other
+failure is an error, because a silently shorter history would remove versions from the site. It
+needs `contents: read` on `repository`. The assets are republished as the releases hold them, so
+whoever can publish or edit a release can add packages to the signed site
+([design.md](design.md#security-model)).
 
 `build-repo` re-signs `.rpm` files from releases older than the signing key, so those then differ
 from their release-page copies by the signature.
