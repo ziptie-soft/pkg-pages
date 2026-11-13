@@ -8,6 +8,8 @@ load helpers
 # The keys are generated once for the file (RSA generation is the slow part):
 #   a, b        two projects' keys (helpers.bash keys)
 #   r           a key whose first subkey gets revoked and replaced: rotation and revocation
+#   v           a key revoked as a whole (the pin carries the revocation certificate)
+#   w           a key with a newer signing subkey in the pin, the old one not revoked
 #   x           a key with an expired subkey, and a subkey added after the pin was exported
 #   p           a key whose subkey is passphrase-protected
 setup_file() {
@@ -25,6 +27,19 @@ setup_file() {
         awk -F: '$1 == "sub" && $2 != "r" { s = 1; next } $1 == "fpr" && s { print $10; exit }')"
     g "$K/r/home" --armor --export "$fpr" > "$K/r/pin-rotated.asc"
     g "$K/r/home" --passphrase '' --armor --export-secret-subkeys "$sub2!" > "$K/r/ci2.asc"
+
+    # v: the whole key revoked, with the certificate gpg wrote when it made the key.
+    "$FIXTURES" key "$K/v" "project v"
+    fpr="$(cat "$K/v/fpr")"
+    sed 's/^:-----BEGIN/-----BEGIN/' "$K/v/home/openpgp-revocs.d/$fpr.rev" | g "$K/v/home" --import 2> /dev/null
+    g "$K/v/home" --armor --export "$fpr" > "$K/v/pin-revoked.asc"
+
+    # w: rotation step 2: a newer signing subkey in the pin, the old one not revoked, CI still on the old.
+    "$FIXTURES" key "$K/w" "project w"
+    fpr="$(cat "$K/w/fpr")"
+    sleep 1 # a later creation time, so the new subkey is the one gpg would prefer
+    g "$K/w/home" --passphrase '' --quick-add-key "$fpr" rsa2048 sign 3y 2> /dev/null
+    g "$K/w/home" --armor --export "$fpr" > "$K/w/pin-both.asc"
 
     # x: made in 2020 (a faked clock: gpg won't date a subkey before its primary) with a signing
     # subkey valid for one day, so expired now. Then a subkey added after the pin was exported.
@@ -149,6 +164,12 @@ rpms() {
     assert_output_contains "can't sign"
 }
 
+@test "a revoked primary: fails once the pin carries the revocation" {
+    import "$K/v/pin-revoked.asc" "$K/v/ci.asc"
+    assert_status 1
+    assert_output_contains "can't sign"
+}
+
 @test "rotation: the new subkey signs with the new pin" {
     import "$K/r/pin-rotated.asc" "$K/r/ci2.asc"
     assert_status 0
@@ -253,6 +274,16 @@ rpms() {
     run "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" check-rpm "$TMP"/rpms/*.rpm
     assert_status 0
     [ "$(output_value checked)" = true ]
+}
+
+@test "rotation step 2: while the pin lists both subkeys, the old one keeps signing" {
+    rpms
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/w/ci.asc")"
+    export REPO_SIGNING_KEY
+    run "$LIB/linux-signing.sh" --pin "$K/w/pin-both.asc" sign-rpm "$TMP"/rpms/*.rpm
+    assert_status 0
+    "$LIB/linux-signing.sh" --pin "$K/w/pin-both.asc" check-rpm "$TMP"/rpms/*.rpm
 }
 
 @test "sign-rpm leaves already-signed files byte-identical" {
