@@ -185,7 +185,7 @@ check_rpm() {
     check_bool allow-unsigned "$allow"
     if [ "$allow" = true ]; then flag=--allow-unsigned; else flag=; fi
     # shellcheck disable=SC2086 # flag is empty or one word
-    with_files "$lib/run.sh" "$mode" --image fedora --tools rpmkeys -- \
+    with_files "$lib/run.sh" "$mode" --image fedora --tools rpmkeys --read-only -- \
         "$lib/linux-signing.sh" --pin "$pin" check-rpm $flag
 }
 
