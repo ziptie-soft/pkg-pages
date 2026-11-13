@@ -22,6 +22,8 @@
 #   --deb-architectures "A B"  Debian architectures that must each have a VERSION package built
 #                           for exactly that architecture (all counts only when listed itself)
 #   --rpm-architectures "A B"  the same for RPM architectures (noarch likewise)
+#   --nix-archives "SYSTEM=PATH…" --nix-binaries "A B" --nix-url-base URL
+#                           opt in to a hash-pinned flake of prebuilt archives
 #
 # Published architectures: those of the packages, plus the required ones. all/noarch packages
 # are listed in every one of them; with only all/noarch packages, amd64 arm64 / x86_64 aarch64.
@@ -60,6 +62,7 @@ usage() {
 
 packages='' out='' base_url='' version='' name='' title='' description='' homepage=''
 suite=stable component=main deb_archs='' rpm_archs='' pin='' listings=true footer=true
+nix_archives='' nix_binaries='' nix_url_base=''
 packslip_project='' packslip_pin='' extra='' import_key=false
 while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || usage
@@ -76,6 +79,9 @@ while [ "$#" -gt 0 ]; do
         --component) component="$2" ;;
         --deb-architectures) deb_archs="$2" ;;
         --rpm-architectures) rpm_archs="$2" ;;
+        --nix-archives) nix_archives="$2" ;;
+        --nix-binaries) nix_binaries="$2" ;;
+        --nix-url-base) nix_url_base="${2%/}" ;;
         --public-key) pin="$2" ;;
         --directory-listings) listings="$2" ;;
         --footer) footer="$2" ;;
@@ -105,6 +111,14 @@ esac
 for a in $deb_archs; do check_word deb-architectures "$a"; done
 for a in $rpm_archs; do check_word rpm-architectures "$a"; done
 [ -z "$homepage" ] || check_url homepage "$homepage"
+[ -z "$nix_archives$nix_binaries$nix_url_base" ] || {
+    [ -n "$nix_archives" ] && [ -n "$nix_binaries" ] && [ -n "$nix_url_base" ] ||
+        die "nix-archives, nix-binaries and nix-url-base must be set together"
+}
+if [ -n "$nix_archives$nix_binaries$nix_url_base" ]; then
+    check_url nix-url-base "$nix_url_base"
+    case "$nix_url_base" in *'"'* | *\\* | *'$'* | *'`'* | *' '*) die "nix-url-base contains characters unsafe in a Nix string" ;; esac
+fi
 [ -z "$extra" ] || [ -d "$extra" ] || die "extra-site $extra is not a directory"
 case "$packslip_project$packslip_pin" in
     *[[:cntrl:]]*) die "packslip inputs may not contain control characters" ;;
@@ -123,6 +137,10 @@ if [ -n "$packslip_pin" ]; then
 fi
 [ -n "$title" ] || title="$name package repositories"
 require_tools gzip sed awk find sha256sum sort
+if [ -n "$nix_archives" ]; then
+    require_tools tar
+    case "$nix_archives" in *.tar.xz*) require_tools xz ;; esac
+fi
 
 # --- Read every package ----------------------------------------------------------------------
 work=''
@@ -204,6 +222,12 @@ gpg_sign() {
 
 mkdir -p "$out"
 [ -z "$fpr" ] || cp "$pin" "$out/$name.asc"
+
+# --- Optional Nix flake ----------------------------------------------------------------------
+if [ -n "$nix_archives" ]; then
+    "$lib/nix-flake.sh" --out "$out/nix" --name "$name" --version "$version" \
+        --url-base "$nix_url_base" --binaries "$nix_binaries" --archives "$nix_archives"
+fi
 
 # --- APT: one suite with one component -------------------------------------------------------
 deb_line=
@@ -479,9 +503,18 @@ h_footer_version=''
         printf '      <p class="note">Installs the release\047s signed packslip bundle from the GitHub release; packslip checks the signature before it installs.</p>\n'
         printf '    </section>\n'
     fi
+    if [ -n "$nix_archives" ]; then
+        nix_systems="$(printf '%s\n' "$nix_archives" | sed 's/=.*//' | tr '\n' ' ')"
+        nix_systems="${nix_systems% }"
+        printf '    <section class="card">\n      <div class="card-head"><h2>Nix</h2><button type="button" class="copy">Copy</button></div>\n'
+        printf '      <div class="cmd"><pre>nix profile install %s/nix/flake.tar.gz\nnix run %s/nix/flake.tar.gz</pre></div>\n' "$h_base" "$h_base"
+        printf '      <p class="note">Prebuilt binaries for %s, pinned by SHA-256. The flake itself is not signed.</p>\n' "$(esc "$nix_systems")"
+        printf '    </section>\n'
+    fi
     printf '    <div class="browse-row"><span>Browse:</span><nav class="browse" aria-label="Browse repositories">'
     [ "$has_rpm" = false ] || printf '<a href="rpm/">rpm/</a>'
     [ "$has_deb" = false ] || printf '<a href="deb/">deb/</a>'
+    [ -z "$nix_archives" ] || printf '<a href="nix/">nix/</a>'
     printf '</nav></div>\n'
     page_footer
     printf '  </body>\n</html>\n'
@@ -528,6 +561,25 @@ fi
 # against the pin rather than against whatever key did the signing.
 need() { [ -s "$out/$1" ] || die "self-check: $1 is missing or empty"; }
 need index.html
+if [ -n "$nix_archives" ]; then
+    need nix/flake.tar.gz
+    need nix/flake.nix
+    need nix/flake.lock
+    tar -tzf "$out/nix/flake.tar.gz" | LC_ALL=C sort > "$work/nix-files"
+    printf 'flake.lock\nflake.nix\n' > "$work/nix-expected"
+    cmp -s "$work/nix-expected" "$work/nix-files" || die "self-check: flake.tar.gz must contain only flake.lock and flake.nix"
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        archive=${entry#*=}
+        file=${archive##*/}
+        sum=$(sha256sum "$archive" | cut -d' ' -f1)
+        if ! grep -Fq "$nix_url_base/$file" "$out/nix/flake.nix" || ! grep -Fq "$sum" "$out/nix/flake.nix"; then
+            die "self-check: SHA-256 for $file is missing from the Nix flake"
+        fi
+    done <<EOF
+$nix_archives
+EOF
+fi
 if [ "$has_deb" = true ]; then
     need "deb/$name.list"
     need "deb/dists/$suite/Release"

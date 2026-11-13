@@ -3,7 +3,7 @@
 # and uploads it as a Pages artifact. Contract: docs/actions.md#build-repo. The work is done by
 # lib/action.sh → lib/pages-repo.sh.
 name: pkg-pages
-description: Build signed APT and DNF/RPM repositories from .deb and .rpm files, ready for GitHub Pages
+description: Build signed APT and DNF/RPM repositories, with an optional hash-pinned Nix flake
 author: ziptie-soft
 branding:
   icon: package
@@ -63,6 +63,18 @@ inputs:
       Space-separated RPM architectures that must each have a package of `version`
       (e.g. "x86_64 aarch64"). Empty: whatever the packages contain. noarch packages are copied
       into every rpm/<arch>/.
+    required: false
+    default: ''
+  nix-archives:
+    description: Newline-separated SYSTEM=PATH prebuilt archives for the optional Nix flake.
+    required: false
+    default: ''
+  nix-binaries:
+    description: Space-separated paths of binaries in each Nix archive, such as bin/mytool.
+    required: false
+    default: ''
+  nix-url-base:
+    description: URL prefix for archive files referenced by the optional Nix flake.
     required: false
     default: ''
   public-key:
@@ -154,6 +166,9 @@ runs:
         INPUT_COMPONENT: ${{ inputs.component }}
         INPUT_DEB_ARCHITECTURES: ${{ inputs.deb-architectures }}
         INPUT_RPM_ARCHITECTURES: ${{ inputs.rpm-architectures }}
+        INPUT_NIX_ARCHIVES: ${{ inputs.nix-archives }}
+        INPUT_NIX_BINARIES: ${{ inputs.nix-binaries }}
+        INPUT_NIX_URL_BASE: ${{ inputs.nix-url-base }}
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
         INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
         INPUT_FOOTER: ${{ inputs.footer }}

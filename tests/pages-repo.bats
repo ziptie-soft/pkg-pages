@@ -86,6 +86,8 @@ apt_only() {
         [ -e "$s/$f" ] || { echo "missing $f"; false; }
     done
     [ ! -e "$s/hello.asc" ]
+    [ ! -d "$s/nix" ]
+    refute grep -q '<h2>Nix</h2>' "$s/index.html"
     [ ! -e "$s/deb/dists/stable/InRelease" ]
     [ ! -e "$s/rpm/x86_64/repodata/repomd.xml.asc" ]
     [ "$(cat "$s/deb/hello.list")" = "deb [trusted=yes] file://$TMP/site/deb stable main" ]
@@ -219,6 +221,38 @@ apt_only() {
         grep -q 'data-theme' "$page"
         grep -q 'prefers-color-scheme' "$page"
     done
+}
+
+@test "optional Nix card installs the flake from the site and pins the release archives" {
+    need_deb tar sha256sum awk
+    pkgs deb
+    mkdir -p "$TMP/archive/hello-1.2.3/bin"
+    printf '#!/bin/sh\necho hi\n' > "$TMP/archive/hello-1.2.3/bin/hello"
+    chmod +x "$TMP/archive/hello-1.2.3/bin/hello"
+    tar -czf "$TMP/hello.tar.gz" -C "$TMP/archive" hello-1.2.3
+    build --nix-archives "x86_64-linux=$TMP/hello.tar.gz" --nix-binaries bin/hello \
+        --nix-url-base 'https://example.test/releases?a=1&b=2'
+    assert_status 0
+    [ -s "$TMP/site/nix/flake.tar.gz" ]
+    [ -s "$TMP/site/nix/flake.nix" ]
+    [ -s "$TMP/site/nix/flake.lock" ]
+    # The flake is served by the site (base-url); only the archives it pins live at nix-url-base.
+    grep -q "nix profile install file://$TMP/site/nix/flake.tar.gz" "$TMP/site/index.html"
+    grep -q "nix run file://$TMP/site/nix/flake.tar.gz" "$TMP/site/index.html"
+    refute grep -q 'example.test' "$TMP/site/index.html"
+    grep -q 'url = "https://example.test/releases?a=1&b=2/hello.tar.gz"' "$TMP/site/nix/flake.nix"
+    grep -q 'Prebuilt binaries for x86_64-linux, pinned by SHA-256. The flake itself is not signed.' "$TMP/site/index.html"
+    grep -q 'href="nix/"' "$TMP/site/index.html"
+    grep -q "sha256 = \"$(sha "$TMP/hello.tar.gz")\"" "$TMP/site/nix/flake.nix"
+}
+
+@test "Nix inputs are opt-in and must be supplied together" {
+    need_deb
+    pkgs deb
+    build --nix-binaries bin/hello
+    assert_status 1
+    assert_output_contains "must be set together"
+    [ ! -d "$TMP/site" ]
 }
 
 @test "footer is published by default and can be disabled" {

@@ -116,9 +116,16 @@ build_repo() {
     check_bool upload "$(input_or UPLOAD true)"
     extra="$(input EXTRA_SITE)"
     [ -z "$extra" ] || check_relpath extra-site "$extra"
+    nix_archives="$(input NIX_ARCHIVES)" nix_binaries="$(input NIX_BINARIES)" \
+        nix_url_base="$(input NIX_URL_BASE)"
+    validate_nix_inputs "$nix_archives" "$nix_binaries" "$nix_url_base"
 
-    "$lib/run.sh" "$mode" --image debian \
-        --tools "gpg gpgv apt-ftparchive dpkg-deb createrepo_c rpm rpmsign rpmkeys" \
+    nix_tools="gpg gpgv apt-ftparchive dpkg-deb createrepo_c rpm rpmsign rpmkeys"
+    if [ -n "$nix_archives" ]; then
+        nix_tools="$nix_tools tar gzip"
+        case "$nix_archives" in *.tar.xz*) nix_tools="$nix_tools xz" ;; esac
+    fi
+    "$lib/run.sh" "$mode" --image debian --tools "$nix_tools" \
         --gnupg --env REPO_SIGNING_KEY --writes "$out" -- \
         "$lib/pages-repo.sh" --import-key true \
         --packages "$packages" --out "$out" --version "$version" --name "$name" \
@@ -128,12 +135,28 @@ build_repo() {
         --component "$(input_or COMPONENT main)" \
         --deb-architectures "$(input DEB_ARCHITECTURES)" \
         --rpm-architectures "$(input RPM_ARCHITECTURES)" \
+        --nix-archives "$nix_archives" --nix-binaries "$nix_binaries" --nix-url-base "$nix_url_base" \
         --public-key "$pin" \
         --directory-listings "${listings:-true}" \
         --footer "${footer:-true}" \
         --packslip-project "$(input PACKSLIP_PROJECT)" \
         --packslip-pin "$(input PACKSLIP_PIN)" \
         --extra-site "$extra"
+}
+
+# validate_nix_inputs ARCHIVES BINARIES URL: enforce all-or-none and checkout-relative archive paths.
+validate_nix_inputs() {
+    _archives=$1 _binaries=$2 _url=$3
+    [ -z "$_archives$_binaries$_url" ] && return 0
+    [ -n "$_archives" ] && [ -n "$_binaries" ] && [ -n "$_url" ] ||
+        die "nix-archives, nix-binaries and nix-url-base must be set together"
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] || continue
+        case "$_entry" in *=*) _path=${_entry#*=} ;; *) die "nix-archives entries must be SYSTEM=PATH" ;; esac
+        check_relpath nix-archives "$_path"
+    done <<EOF
+$_archives
+EOF
 }
 
 sign_rpm() {

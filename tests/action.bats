@@ -84,6 +84,25 @@ build_repo() {
     [ "$(writes)" = public ]
 }
 
+@test "build-repo validates Nix archive paths and passes the opted-in values" {
+    touch archives.tar.gz
+    export INPUT_NIX_ARCHIVES="x86_64-linux=archives.tar.gz" INPUT_NIX_BINARIES=bin/hello \
+        INPUT_NIX_URL_BASE=https://example.test/releases
+    build_repo
+    assert_status 0
+    [ "$(arg_after --nix-archives)" = "x86_64-linux=archives.tar.gz" ]
+    [ "$(arg_after --nix-binaries)" = bin/hello ]
+    [ "$(arg_after --nix-url-base)" = https://example.test/releases ]
+    grep -Eq '^PKG_PAGES_TOOLS=.*tar gzip$' "$TMP/docker.args"
+    grep -qxF "$TMP/work:$TMP/work" "$TMP/docker.args"
+    export INPUT_NIX_ARCHIVES="x86_64-linux=../outside.tar.gz"
+    build_repo
+    assert_status 1
+    export INPUT_NIX_ARCHIVES=x86_64-linux=archives.tar.gz INPUT_NIX_BINARIES='' INPUT_NIX_URL_BASE=''
+    build_repo
+    assert_status 1
+}
+
 @test "build-repo rejects unsafe paths and bad modes" {
     export INPUT_OUT=/tmp/site;   build_repo; assert_status 1
     export INPUT_OUT=../site;     build_repo; assert_status 1
