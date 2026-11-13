@@ -44,6 +44,22 @@ https://b"
     assert_status 1
 }
 
+@test "check_base_url accepts site URLs" {
+    for u in https://owner.github.io/repo https://pkgs.example.com file:///tmp/site \
+        'https://h/a-b_c.d~e/%41+@=,'; do
+        run sh -c ". '$LIB/common.sh'; check_base_url base-url \"\$1\"" sh "$u"
+        assert_status 0
+    done
+}
+
+@test "check_base_url refuses what a shell would interpret" {
+    for u in 'https://h/p?q=1' 'https://h/a&b' 'https://h/a;b' 'https://h/(x)' \
+        'https://h/a*' 'https://h/a!b' 'https://h/a#b' http://x; do
+        run sh -c ". '$LIB/common.sh'; check_base_url base-url \"\$1\"" sh "$u"
+        assert_status 1
+    done
+}
+
 @test "check_relpath accepts relative paths and rejects absolute ones and .." {
     for p in site dist/x.rpm packaging/signing/repo.asc ./a 'a b/c' a..b; do
         run sh -c ". '$LIB/common.sh'; check_relpath p \"\$1\"" sh "$p"
@@ -83,6 +99,15 @@ https://b"
     [ "$output" = "error: boom" ]
     GITHUB_ACTIONS=true run sh_lib "die boom"
     [ "$output" = "::error::boom" ]
+}
+
+@test "warning prints an annotation in Actions and plain text elsewhere" {
+    run sh_lib "warning hi"
+    assert_status 0
+    [ "$output" = "warning: hi" ]
+    GITHUB_ACTIONS=true run sh_lib "warning hi"
+    assert_status 0
+    [ "$output" = "::warning::hi" ]
 }
 
 @test "set_output and set_env append to the runner's files" {

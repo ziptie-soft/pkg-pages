@@ -26,6 +26,15 @@ notice() {
     fi
 }
 
+# warning MESSAGE...: an annotation for something that works but needs the caller's attention.
+warning() {
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then
+        printf '::warning::%s\n' "$*" >&2
+    else
+        printf 'warning: %s\n' "$*" >&2
+    fi
+}
+
 # log MESSAGE...: progress, on stderr so that stdout stays usable for data.
 log() {
     printf '%s\n' "$*" >&2
@@ -69,9 +78,9 @@ check_name() {
     esac
 }
 
-# check_url LABEL VALUE: https:// or file:/// only, on one line, and only characters that need no
-# quoting in the .list and .repo files and the shell commands of the landing page. No $, which
-# dnf would expand, and no quotes, spaces or <>.
+# check_url LABEL VALUE: https:// or file:/// only, on one line, and only URL characters: no
+# quotes, spaces, <>, backslashes, or $ (which dnf would expand). Callers HTML-escape it; a URL
+# that shell commands contain must also pass check_base_url.
 check_url() {
     case "$2" in
         https://?* | file:///*) ;;
@@ -83,6 +92,14 @@ check_url() {
     esac
     printf '%s\n' "$2" | grep -Eq '^[A-Za-z0-9._~:/?#@!&()*+,;=%-]+$' ||
         die "$1 contains characters that are not allowed in a URL: '$2'"
+}
+
+# check_base_url LABEL VALUE: check_url, and only characters that need no quoting in a POSIX
+# or fish command line, a .list or a .repo file: letters, digits and . _ ~ : / % + @ = , -
+check_base_url() {
+    check_url "$1" "$2"
+    printf '%s\n' "$2" | LC_ALL=C grep -Eq '^[A-Za-z0-9._~:/%+@=,-]+$' ||
+        die "$1 may only hold letters, digits and . _ ~ : / % + @ = , - (the install commands use it unquoted), not '$2'"
 }
 
 # check_relpath LABEL VALUE: a path relative to the working directory, without .. segments.
