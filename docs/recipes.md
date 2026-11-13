@@ -124,6 +124,24 @@ To keep the secret in another environment, or the pin elsewhere:
       signing-key: ${{ secrets.MY_RPM_KEY }}
 ```
 
+## Optional Nix install for prebuilt musl tarballs
+
+For a project such as star-forge that already publishes static or musl release tarballs, upload
+those archives as artifacts in the build job and pass their download pattern and archive names:
+
+```yaml
+      nix-artifacts: star-forge-linux-*
+      nix-archives: |
+        x86_64-linux=star-forge-x86_64-linux-musl.tar.gz
+        aarch64-linux=star-forge-aarch64-linux-musl.tar.gz
+      nix-binaries: bin/star-forge
+      # Optional; the default is this tag's GitHub Release download URL.
+      nix-url-base: https://github.com/<owner>/<repo>/releases/download/<tag>
+```
+
+Attach the same files to that release. The generated flake pins each archive by SHA-256, and
+users install it with `nix profile install <base-url>/nix/flake.tar.gz`.
+
 ## Attaching the signed packages to the release
 
 The release page should serve the same signed `.rpm` files as the DNF repository. A job after

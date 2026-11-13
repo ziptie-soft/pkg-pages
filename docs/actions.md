@@ -66,6 +66,12 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    `.rpm` verify against the pin.
 10. With `upload: 'true'`, it runs `actions/upload-pages-artifact` and outputs `artifact-id`.
 
+The optional Nix inputs are `nix-archives` (newline-separated `SYSTEM=PATH` entries relative to
+the checkout), `nix-binaries` (space-separated paths inside each archive), and `nix-url-base`
+(the URL prefix where those archives are served). Leave all three empty to omit Nix. When set,
+the action validates and hashes the tarballs, then publishes `nix/flake.tar.gz`, `flake.nix` and
+`flake.lock`; archives are not extracted or executed by the action.
+
 It fails when `out` exists, when the inputs are invalid, when a tool is missing in host mode, on
 any signing mismatch, or when the self-check fails. On failure nothing is uploaded.
 
@@ -175,7 +181,10 @@ versions against the crate. See [building.md](building.md). Its output paths are
 3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
    skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`. The `footer` input
    controls the small pkg-pages footer (default true). `packslip` opts in to the install card for
-   `github.com/<caller repository>`; `packslip-pin` optionally pins its signer.
+   `github.com/<caller repository>`; `packslip-pin` optionally pins its signer. Optional
+   `nix-artifacts` downloads this run's prebuilt archives; `nix-archives` maps systems to file
+   names, `nix-binaries` names the binaries within them, and `nix-url-base` overrides the default
+   release download URL.
 4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
    (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Merges
    `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.

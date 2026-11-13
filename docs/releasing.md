@@ -55,6 +55,13 @@ are W's too.
   commit: every self reference points at one commit, an ancestor whose actions, `lib/` and
   `images.env` are identical. A failure means the release must be replaced by a fix release.
 
+### Refreshing the Nix lock
+
+When `lib/nix-flake.sh` changes `nixpkgs_ref`, run `dev/nix-lock.sh` to create a throwaway flake
+and refresh `lib/nix/flake.lock` in the pinned Nix image. Commit the updated lock with the change.
+The maintainer tool is never run in CI. A change to an action reaches `publish.yml` only with the
+next release, because its self-pinned build-repo action does not yet know new inputs.
+
 Between releases, `publish.yml` on `master` still points at the last release's W, so the
 self-test exercises the workflow with those actions; `ci.yml` tests the current ones.
 

@@ -39,6 +39,7 @@
 
 ## Repository formats and tools
 
+- [Nix flake reference](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-flake.html)
 - [Debian repository format](https://wiki.debian.org/DebianRepository/Format): Release,
   InRelease, Packages, pool layout.
 - [apt-ftparchive(1)](https://manpages.debian.org/trixie/apt-utils/apt-ftparchive.1.en.html),

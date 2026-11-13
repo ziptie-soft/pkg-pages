@@ -37,7 +37,7 @@ package-rust/
   release.yml            release-please and the self-pin (docs/releasing.md)
 lib/                     the POSIX sh scripts the actions run (lib/README.md)
 tools/ci-key             a maintainer CLI, never run in CI
-dev/                     repository tooling: the pin gate, the self-ref check, self-pin.sh
+dev/                     repository tooling: pin gates, self-pin.sh and nix-lock.sh
 tests/                   bats tests and their fixtures (tests/README.md)
 images.env               the container images, pinned by digest
 docs/                    design, contracts, signing, building, releasing

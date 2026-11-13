@@ -10,7 +10,8 @@
 Publish your project's `.deb` and `.rpm` packages as **APT and DNF repositories on GitHub
 Pages**, signed with OpenPGP, from GitHub Actions. No package hosting service, no server: a
 release builds the packages, pkg-pages signs them and the repository metadata, and Pages serves
-the result.
+the result. Opt-in Nix support publishes a hash-pinned flake that installs prebuilt release
+tarballs without compiling them.
 
 > **Status: v1.** Every part follows semantic versioning. Pin a release's commit SHA.
 
@@ -30,6 +31,12 @@ echo 'deb [signed-by=/etc/apt/keyrings/<name>.asc] https://<owner>.github.io/<re
 sudo apt update && sudo apt install <name>
 ```
 
+When the release workflow enables Nix support:
+
+```sh
+nix profile install https://<owner>.github.io/<repo>/nix/flake.tar.gz
+```
+
 Every repository built with pkg-pages has the same layout and the same landing page with these
 commands, so users who know one know them all ([docs/design.md](docs/design.md#published-layout)).
 
@@ -37,6 +44,8 @@ commands, so users who know one know them all ([docs/design.md](docs/design.md#p
 
 - **APT and DNF from one set of inputs.** One `stable` suite, `deb/` and `rpm/<arch>/`, several
   architectures, `Architecture: all` and `noarch` packages.
+- **Optional Nix flake.** Installs release tarballs by SHA-256; it builds no binaries and uses no
+  binary cache.
 - **Signing is optional and fails closed.** With no committed public key and no secret, the
   repositories are published unsigned. Once the key is committed, every release must be signed
   with it, or the release fails ([docs/signing.md](docs/signing.md)).
