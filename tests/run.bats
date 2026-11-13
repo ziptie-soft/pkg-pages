@@ -156,6 +156,22 @@ has_args() {
     assert_output_contains "runner-mode: host"
 }
 
+@test "in-container.sh: the package manager never sees the signing key; the command does" {
+    mkdir -p "$TMP/fakebin"
+    ln -s "$(command -v dirname)" "$TMP/fakebin/dirname"
+    ln -s "$(command -v env)" "$TMP/fakebin/env"
+    printf '#!/bin/sh\nenv >> "%s/apt.env"\n' "$TMP" > "$TMP/fakebin/apt-get"
+    chmod +x "$TMP/fakebin/apt-get"
+    run env PATH="$TMP/fakebin" REPO_SIGNING_KEY=k1 PKG_PAGES_TOOLS=gpg /bin/sh "$LIB/in-container.sh" env
+    assert_status 0
+    assert_output_contains "REPO_SIGNING_KEY=k1"
+    grep -q '^DEBIAN_FRONTEND=noninteractive' "$TMP/apt.env"
+    refute grep -q REPO_SIGNING_KEY "$TMP/apt.env"
+    run env PATH="$TMP/fakebin" PKG_PAGES_TOOLS= /bin/sh "$LIB/in-container.sh" env
+    assert_status 0
+    refute grep -q '^REPO_SIGNING_KEY=' <<< "$output"
+}
+
 @test "in-container.sh installs only missing tools, runs the command, chowns written paths" {
     need_system
     # In a real container: as root, with a package manager.
