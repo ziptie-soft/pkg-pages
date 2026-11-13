@@ -19,12 +19,18 @@ package_for() {
         apt:apt-ftparchive) echo apt-utils ;;
         apt:createrepo_c) echo createrepo-c ;;
         apt:dpkg-deb) echo dpkg ;;
+        apt:tar) echo tar ;;
+        apt:gzip) echo gzip ;;
+        apt:xz) echo xz-utils ;;
         dnf:gpg | dnf:gpgv) echo gnupg2 ;;
         dnf:rpm | dnf:rpmkeys) echo rpm ;;
         dnf:rpmsign) echo rpm-sign ;;
         dnf:rpmbuild) echo rpm-build ;;
         dnf:createrepo_c) echo createrepo_c ;;
         dnf:dpkg-deb) echo dpkg ;;
+        dnf:tar) echo tar ;;
+        dnf:gzip) echo gzip ;;
+        dnf:xz) echo xz ;;
         dnf:apt-ftparchive) die "apt-ftparchive is not available on Fedora; use the debian image" ;;
         *) die "don't know which package provides $2 ($1)" ;;
     esac

@@ -36,6 +36,28 @@ on:
         required: false
         type: string
         default: ''
+      nix-artifacts:
+        description: download-artifact pattern of this run's prebuilt release tarballs (empty for none).
+        required: false
+        type: string
+        default: ''
+      nix-archives:
+        description: Newline-separated SYSTEM=FILE-NAME entries for the Nix tarballs.
+        required: false
+        type: string
+        default: ''
+      nix-binaries:
+        description: Space-separated binary paths within each Nix tarball.
+        required: false
+        type: string
+        default: ''
+      nix-url-base:
+        description: >-
+          URL prefix where release tarballs are served; defaults to this tag's GitHub release
+          download URL.
+        required: false
+        type: string
+        default: ''
       name:
         description: Base name of the published files; defaults to the repository name.
         required: false
@@ -414,6 +436,50 @@ jobs:
           artifact-ids: ${{ needs.sign.outputs.rpm-id }}
           path: pkg-pages/packages/rpm
 
+      - name: Prepare Nix archive inputs
+        id: nix
+        shell: bash
+        env:
+          NIX_ARTIFACTS: ${{ inputs.nix-artifacts }}
+          NIX_ARCHIVES: ${{ inputs.nix-archives }}
+          NIX_BINARIES: ${{ inputs.nix-binaries }}
+          NIX_URL_BASE: ${{ inputs.nix-url-base }}
+          RELEASE_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NIX_ARTIFACTS}${NIX_ARCHIVES}${NIX_BINARIES}" ] && {
+            [ -z "${NIX_ARTIFACTS}" ] || [ -z "${NIX_ARCHIVES}" ] || [ -z "${NIX_BINARIES}" ];
+          }; then
+            echo "::error::nix-artifacts, nix-archives and nix-binaries must be set together"
+            exit 1
+          fi
+          if [ -z "${NIX_ARTIFACTS}" ]; then
+            [ -z "${NIX_URL_BASE}" ] || { echo "::error::nix-url-base requires Nix inputs"; exit 1; }
+            exit 0
+          fi
+          NIX_URL_BASE="${NIX_URL_BASE:-${RELEASE_BASE}}"
+          case "${NIX_URL_BASE}" in *$'\n'*) echo "::error::nix-url-base must be one line"; exit 1 ;; esac
+          delimiter="$(openssl rand -hex 16)"
+          {
+            printf 'archives<<%s\n' "${delimiter}"
+            while IFS= read -r item; do
+              [ -n "${item}" ] || continue
+              IFS='=' read -r system file <<< "${item}"
+              case "${file}" in '' | */* | *[!A-Za-z0-9._+-]*) echo "::error::Nix archive names must be file names without slashes"; exit 1 ;; esac
+              printf '%s=pkg-pages/nix/%s\n' "${system}" "${file}"
+            done <<< "${NIX_ARCHIVES}"
+            printf '%s\nurl-base=%s\n' "${delimiter}" "${NIX_URL_BASE}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # Archives are only hashed and listed in this key-holding job; they are never extracted or run.
+      - name: Fetch the Nix archives
+        if: ${{ inputs.nix-artifacts != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.nix-artifacts }}
+          merge-multiple: true
+          path: pkg-pages/nix
+
       - name: Fetch earlier releases' packages
         uses: ziptie-soft/pkg-pages/fetch-history@b62b0d9dc01f9ecf271782d7ec3f663c955fa720 # v1.0.0 pkg-pages self-pin
         with:
@@ -440,6 +506,9 @@ jobs:
           component: ${{ inputs.component }}
           deb-architectures: ${{ inputs.deb-architectures }}
           rpm-architectures: ${{ inputs.rpm-architectures }}
+          nix-archives: ${{ steps.nix.outputs.archives }}
+          nix-binaries: ${{ inputs.nix-binaries }}
+          nix-url-base: ${{ steps.nix.outputs.url-base }}
           public-key: pkg-pages/public-key/repo.asc
           signing-key: ${{ secrets.signing-key }}
           out: pkg-pages/site
