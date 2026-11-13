@@ -389,3 +389,19 @@ rpms() {
     run "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" check-rpm "$f"
     assert_status 1
 }
+
+@test "sign-rpm: rpmsign and rpmkeys run without the key in their environment" {
+    rpms
+    mkdir -p "$TMP/wrap"
+    for t in rpmsign rpmkeys; do
+        printf '#!/bin/sh\nenv >> "%s"\nexec "%s" "$@"\n' "$TMP/tools.env" "$(command -v "$t")" > "$TMP/wrap/$t"
+        chmod +x "$TMP/wrap/$t"
+    done
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
+    export REPO_SIGNING_KEY
+    PATH="$TMP/wrap:$PATH" run "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" sign-rpm "$TMP"/rpms/*.rpm
+    assert_status 0
+    [ -s "$TMP/tools.env" ]
+    refute grep -q '^REPO_SIGNING_KEY=' "$TMP/tools.env"
+}

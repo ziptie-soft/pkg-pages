@@ -667,3 +667,18 @@ apt_only() {
     rm /etc/yum.repos.d/pkg-pages-test.repo
     assert_status 1
 }
+
+@test "signed build: no tool but the import sees the key in its environment" {
+    need_both
+    need gpgv rpmsign rpmkeys
+    pkgs deb rpm
+    mkdir -p "$TMP/wrap"
+    for t in dpkg-deb apt-ftparchive createrepo_c; do
+        printf '#!/bin/sh\nenv >> "%s"\nexec "%s" "$@"\n' "$TMP/tools.env" "$(command -v "$t")" > "$TMP/wrap/$t"
+        chmod +x "$TMP/wrap/$t"
+    done
+    PATH="$TMP/wrap:$PATH" build_signed
+    assert_status 0
+    [ -s "$TMP/tools.env" ]
+    refute grep -q '^REPO_SIGNING_KEY=' "$TMP/tools.env"
+}

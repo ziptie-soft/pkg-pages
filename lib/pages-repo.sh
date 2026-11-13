@@ -56,6 +56,10 @@ lib="$(cd "$(dirname "$0")" && pwd)"
 . "$lib/packages.sh"
 # shellcheck source=signing.sh
 . "$lib/signing.sh"
+# The key is for signing_import alone, which reads the shell variable: no tool this script runs,
+# the package readers included, gets it in its environment.
+signing_key="${REPO_SIGNING_KEY-}"
+unset REPO_SIGNING_KEY
 
 usage() {
     die "usage: $0 --packages DIR --out DIR --base-url URL --version VERSION --name NAME [OPTION]... (see the header of $0)"
@@ -216,10 +220,11 @@ fpr=
 if [ "$import_key" = true ]; then
     require_tools gpg
     [ -n "$pin" ] || die "--import-key needs --public-key"
-    fpr="$(signing_import "$pin")"
+    fpr="$(REPO_SIGNING_KEY="$signing_key"; signing_import "$pin")"
 elif [ -n "${GNUPGHOME:-}" ] && command -v gpg > /dev/null 2>&1; then
     fpr="$(secret_fpr)"
 fi
+signing_key=''
 if [ -n "$fpr" ]; then
     require_tools gpg gpgv
     [ -n "$pin" ] || die "gpg holds a signing key but no public-key was given"
