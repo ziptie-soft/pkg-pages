@@ -140,7 +140,8 @@ jobs:
       - name: Install rpmbuild
         run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
 
-      # Two releases: 1.0.0 (this one) and 0.9.0 (history), deb and rpm, arch-specific and not.
+      # Two releases: 1.0.0 (this one) and 0.9.0 (history), deb and rpm, arch-specific and not. The
+      # history is unsigned and described by a map, as if it came from a GitHub release.
       - name: Make test packages and a test key
         id: fixtures
         run: |
@@ -152,6 +153,9 @@ jobs:
           done
           tests/fixtures.sh deb dist pptest-data 1.0.0 all
           tests/fixtures.sh rpm dist pptest-data 1.0.0 noarch
+          for f in history/*; do
+            printf 'v0.9.0\t%s\t%s\trelease\n' "$(sha256sum "${f}" | cut -d' ' -f1)" "${f#history/}"
+          done > history.map
           tests/fixtures.sh key "${RUNNER_TEMP}/key"
           mkdir -p test-signing
           cp "${RUNNER_TEMP}/key/pin.asc" test-signing/repo.asc
@@ -167,9 +171,7 @@ jobs:
         id: sign
         uses: ./sign-rpm
         with:
-          packages: |
-            dist/*.rpm
-            history/*.rpm
+          packages: dist/*.rpm
           public-key: test-signing/repo.asc
           signing-key: ${{ steps.fixtures.outputs.key }}
 
@@ -201,14 +203,32 @@ jobs:
           packages: dist/*.deb
           distro: ubuntu
 
-      - name: Gather this release and the history
-        run: mkdir all && cp dist/* history/* all/
+      # The history's .rpm files are unsigned and from a release, so nothing proves their bytes:
+      # without resign-history the build stops, before it makes a site.
+      - name: build-repo (unproven history, must fail)
+        id: unproven
+        continue-on-error: true
+        uses: ./
+        with:
+          packages: dist
+          history: history
+          history-map: history.map
+          version: 1.0.0
+          tag: v1.0.0
+          name: pptest
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+          resign-history: 'false'
+          out: site-unproven
+          upload: 'false'
 
       - name: build-repo (signed)
         id: repo
         uses: ./
         with:
-          packages: all
+          packages: dist
+          history: history
+          history-map: history.map
           version: 1.0.0
           name: pptest
           description: pkg-pages CI <self-test>
@@ -219,6 +239,7 @@ jobs:
           signing-key: ${{ steps.fixtures.outputs.key }}
           tag: v1.0.0
           keyring-package: 'true'
+          resign-history: 'true'
           artifact-name: pkg-pages-selftest-site
           retention-days: '1'
 
@@ -226,8 +247,11 @@ jobs:
         id: unsigned
         uses: ./
         with:
-          packages: all
+          packages: dist
+          history: history
+          history-map: history.map
           version: 1.0.0
+          tag: v1.0.0
           name: pptest
           base-url: https://example.github.io/pptest
           public-key: test-signing/absent.asc
@@ -239,12 +263,23 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          packages: all
+          packages: dist
+          history: history
+          history-map: history.map
           version: 1.0.0
+          tag: v1.0.0
           name: pptest
           public-key: test-signing/repo.asc
           out: site-no-key
           upload: 'false'
+
+      # Every .rpm of the signed site, the earlier release's included, is signed by the pin.
+      - name: check-rpm (the site)
+        uses: ./check-rpm
+        with:
+          packages: site/rpm/*/*.rpm
+          public-key: test-signing/repo.asc
+          allow-unsigned: 'false'
 
       - name: Check the outputs and the sites
         env:
@@ -255,6 +290,7 @@ jobs:
           ARTIFACT_ID: ${{ steps.repo.outputs.artifact-id }}
           UNSIGNED: ${{ steps.unsigned.outputs.signed }}
           NO_KEY: ${{ steps.no-key.outcome }}
+          UNPROVEN: ${{ steps.unproven.outcome }}
         run: |
           set -euo pipefail
           test "${SIGNED}" = true
@@ -263,7 +299,15 @@ jobs:
           test -n "${ARTIFACT_ID}"
           test "${UNSIGNED}" = false
           test "${NO_KEY}" = failure
+          test "${UNPROVEN}" = failure
           test ! -e site-no-key
+          test ! -e site-unproven
+          # The work directories and the to-sign lists are gone, whatever the outcome.
+          test -z "$(ls -d site*.work site*.to-sign 2> /dev/null)"
+          # The caller's history is as fetch-history left it: unsigned, and the map still names it.
+          while IFS=$'\t' read -r _ sha path _; do
+            echo "${sha}  history/${path}" | sha256sum --check --quiet -
+          done < history.map
           # Files written in the containers belong to the runner user.
           test "$(stat -c %U site/index.html)" = "$(id -un)"
           test "$(stat -c %U dist/pptest-1.0.0-1.x86_64.rpm)" = "$(id -un)"
@@ -275,6 +319,9 @@ jobs:
           # tag and keyring-package: a signed manifest, and the keyring package the .list names.
           test -s site/pkg-pages.tsv.asc
           grep -qP '^release\tv1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/' site/pkg-pages.tsv
+          # The earlier release stays in the site under its own tag, its .rpm signed again.
+          grep -qP '^release\tv0\.9\.0\t[0-9a-f]{64}\trpm/x86_64/pptest-0\.9\.0-1\.x86_64\.rpm$' site/pkg-pages.tsv
+          grep -qP '^release\tv0\.9\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/pptest_0\.9\.0-1_amd64\.deb$' site/pkg-pages.tsv
           grep -qP '^keyring\t-\t[0-9a-f]{64}\tdeb/pool/main/p/pptest-keyring/pptest-keyring_[0-9.]+_all\.deb$' site/pkg-pages.tsv
           grep -q 'signed-by=/usr/share/keyrings/pptest-keyring.asc' site/deb/pptest.list
           test -s site/rpm/RPM-GPG-KEY-pptest

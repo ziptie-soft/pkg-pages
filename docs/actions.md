@@ -31,17 +31,35 @@ Conventions shared by every part:
 
 ## build-repo
 
-`uses: ziptie-soft/pkg-pages@<sha>` (root `action.yml`; `lib/pages-repo.sh`).
+`uses: ziptie-soft/pkg-pages@<sha>` (root `action.yml`; `lib/action.sh`, which runs the stages).
 
 Builds the site described in [design.md#published-layout](design.md#published-layout) from
-`packages`, and uploads it as a Pages artifact.
+`packages` (this release's files) and `history` (earlier releases'), and uploads it as a Pages
+artifact.
+
+It runs the stage of each action below, one after the other, each as its own `run.sh` call (its own
+container in docker mode), in `<out>.work/`, which it removes at the end with `<out>.to-sign`:
+
+1. [`build-keyring`](#build-keyring), with `keyring-package` (a signed site with `.deb` files).
+2. [`sign-rpm`](#sign-rpm), on copies of this release's `.rpm` files, then on the history's.
+3. [`build-site`](#build-site), from the copies.
+4. [`seal-site`](#seal-site).
+5. [`check-site`](#check-site).
+
+The key reaches only the signing stage (2) and the seal (4), never a container that parses
+packages for the layout. An unsigned site (no pin and no key) skips 1, 2 and 4. A pin without a
+key, or a key without a pin, is an error before any stage runs. The caller's `packages`, `history`
+and `history-map` are never modified.
+
+The numbered points below describe the result.
 
 1. Defaults: `name` is the repository name, lowercased, with `_` turned into `-`. `base-url` is
    `https://<owner, lowercased>.github.io/<repo>`, or `https://<owner>.github.io` for a
    `<owner>.github.io` repository. `homepage` is the repository URL. `packslip-project` and
    `packslip-pin` default to empty; a non-empty project adds the CLI-only packslip and mise card,
    and a pin is allowed only with a project.
-2. Every file under `packages`, recursively, must be a `.deb` or a binary `.rpm`. Symbolic links and
+2. Every file under `packages` and under `history`, recursively, must be a `.deb` or a binary
+   `.rpm`. Symbolic links and
    other files that aren't regular files are errors too. Name, version and architecture come from
    `dpkg-deb -f` and `rpm -qp`; file names don't matter. The same package twice is fine if the
    bytes match and an error if they don't.
@@ -51,18 +69,19 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    list `all` or `noarch` itself. Debian versions match `version` or `version-<revision>`,
    ignoring the epoch (cargo-deb writes `1.2.3-1`). RPM versions match `%{VERSION}`, with any
    release; `1.2.3-rc.1` also matches `1.2.3~rc.1`.
-4. The key is imported, failing closed ([signing.md](signing.md#fail-closed-matrix)).
+4. Each stage that holds the key imports it, failing closed
+   ([signing.md](signing.md#fail-closed-matrix)).
 5. APT: the `.deb` files go to `pool/<component>/<p>/<package>/`, where `<p>` is the first letter,
    or `lib` plus the fourth letter for `lib*` packages. File names leave out the epoch, as
    Debian's do, so two `.deb` files that differ only in the epoch are an error. Then
    `apt-ftparchive packages` runs for each architecture, followed by `apt-ftparchive release`.
    When signed, `InRelease` is clearsigned and `Release.gpg` detach-signed.
 6. DNF: there is one repository per architecture, and `noarch` packages are copied into each.
-   When signed, files that already verify against the pin are left byte-identical, and the others
-   are re-signed: this release's silently, earlier releases' with a warning each. With
-   `resign-history: false`, an earlier release's `.rpm` that doesn't verify is an error instead.
-   Then `createrepo_c --compatibility` runs, and
-   `repomd.xml` is detach-signed.
+   When signed, `sign-rpm` signs this release's `.rpm` files first (a file that already verifies
+   against the pin stays byte-identical), then the history's: an earlier `.rpm` that the current
+   subkey didn't sign is signed again if its bytes are proven, and an unproven one (see
+   [`sign-rpm`](#sign-rpm)) is an error unless `resign-history` is `'true'`, which signs it with a
+   warning. Then `createrepo_c --compatibility` runs, and `repomd.xml` is detach-signed.
 7. The architectures published are those of the packages plus the required ones. With only
    `all`/`noarch` packages they are `amd64 arm64` and `x86_64 aarch64`.
 8. It writes `<name>.asc` (the pin itself, revocations included), `deb/<name>.list`,
@@ -81,21 +100,19 @@ Builds the site described in [design.md#published-layout](design.md#published-la
    verifies against `rpm/RPM-GPG-KEY-<name>` alone.
 10. With `upload: 'true'`, it runs `actions/upload-pages-artifact` and outputs `artifact-id`.
 
-`tag`, `history-map` and `keyring-package` are the inputs of the staged build, all off by default
-so that a v1 caller sees no change:
+`tag`, `history`, `history-map` and `keyring-package` are the inputs of the staged build:
 
-- **`tag`** (this release's tag) makes the site list its packages in `pkg-pages.tsv`, tab-separated,
-  each under its release tag, signed as `pkg-pages.tsv.asc` when the site is
-  ([design.md#published-layout](design.md#published-layout)). Without `history-map`, every
-  package is listed under `tag`.
-- **`history-map`** (`fetch-history`'s `map`, needs `tag`) says which of the packages are earlier
-  releases', by SHA-256, so each is listed under its own tag. A `.rpm` that `resign-history`
-  signs again keeps its tag.
+- **`tag`** (required) is this release's tag. The site lists its packages in `pkg-pages.tsv`,
+  tab-separated, each under its release tag, signed as `pkg-pages.tsv.asc` when the site is
+  ([design.md#published-layout](design.md#published-layout)).
+- **`history`** and **`history-map`** (`fetch-history`'s `dir` and `map`; set both or neither) hold
+  earlier releases. `packages` is this release's files only. Each history file is listed under the
+  tag the map gives it, found by its SHA-256, and an `.rpm` that is signed again keeps its tag.
 - **`keyring-package: 'true'`** also publishes `<name>-keyring_<version>_all.deb`, the same
   package `build-keyring` builds. The `.list` then names it as the APT key
   (`signed-by=/usr/share/keyrings/<name>-keyring.asc`) and the landing page installs it first. It
   builds a `.deb` only, and only for a signed site with `.deb` files (otherwise a notice). A
-  package of the caller's named `<name>-keyring` is refused.
+  package of the caller's named `<name>-keyring` is refused. It is off by default.
 
 The optional Nix inputs are `nix-archives` (newline-separated `SYSTEM=PATH` entries relative to
 the checkout), `nix-binaries` (space-separated paths inside each archive), and `nix-url-base`
@@ -103,14 +120,19 @@ the checkout), `nix-binaries` (space-separated paths inside each archive), and `
 the action validates and hashes the tarballs, then publishes `nix/flake.tar.gz`, `flake.nix` and
 `flake.lock`; archives are not extracted or executed by the action.
 
-It fails when `out` exists, when the inputs are invalid, when a tool is missing in host mode, on
-any signing mismatch, or when the self-check fails. On failure nothing is uploaded.
+It fails when `out`, `<out>.work` or `<out>.to-sign` exists, when the inputs are invalid (a
+missing `tag`, a `history` without its map), when a tool is missing in host mode, on any signing
+mismatch, on an unproven earlier `.rpm`, or when the self-check fails. On failure nothing is
+uploaded.
 
 ```yaml
 - uses: ziptie-soft/pkg-pages@<sha> # vX.Y.Z
   with:
     packages: assets
+    history: history
+    history-map: ${{ steps.history.outputs.map }}
     version: ${{ needs.release.outputs.version }}
+    tag: ${{ github.ref_name }}
     deb-architectures: amd64 arm64
     rpm-architectures: x86_64 aarch64
     signing-key: ${{ secrets.REPO_SIGNING_KEY }}
@@ -312,8 +334,9 @@ to `dir`, and `site` or `release` (`-` as the tag for the keyring package). `bui
 file's release tag in it, and `sign-rpm` reads which files are proven. Without `map`, nothing
 changes. Outputs: `tags`, and `map` when it is set.
 
-`build-repo` re-signs `.rpm` files from releases older than the signing key, so those then differ
-from their release-page copies by the signature (or, with `resign-history: false`, refuses them).
+`build-repo` signs earlier `.rpm` files again with the current subkey, so those differ from their
+release-page copies by the signature. One from a release that doesn't verify against the pin is
+refused, unless `resign-history` is `'true'`.
 
 ## install-test
 
