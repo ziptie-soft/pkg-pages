@@ -53,6 +53,14 @@ if [ "${1:-}" = --check ]; then
     w="$shas"
     git cat-file -e "$w^{commit}" 2> /dev/null || die "the pinned commit $w is not in this repository"
     git merge-base --is-ancestor "$w" "$rev" || die "the pinned commit $w is not an ancestor of $rev"
+    action_paths="$(printf '%s\n' "$lines" | sed -E 's|.*ziptie-soft/pkg-pages(/[^@ ]+)?@[0-9a-f]{40}.*|\1|')"
+    printf '%s\n' "$action_paths" | while IFS= read -r action_path; do
+        case "$action_path" in
+            '') action_path=action.yml ;;
+            /*) action_path="${action_path#/}/action.yml" ;;
+        esac
+        git cat-file -e "$w:$action_path" 2> /dev/null || die "the pinned commit $w has no $action_path"
+    done
     # The release version: every pin comment and footer-version line, and version.txt.
     fvers="$(printf '%s\n' "$content" | grep -E "$fver" || true)"
     [ -n "$fvers" ] || die "$file has no 'footer-version: X.Y.Z # pkg-pages self-pin' line at $rev"

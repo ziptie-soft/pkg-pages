@@ -218,6 +218,17 @@ selfpin_repo() {
     assert_status 1
 }
 
+@test "self-pin --check: fails when a referenced action is missing at W" {
+    selfpin_repo
+    dev/self-pin.sh "$W" 1.0.0 > /dev/null
+    printf '      - uses: ziptie-soft/pkg-pages/nope@%s # v1.0.0 pkg-pages self-pin\n' "$W" >> .github/workflows/publish.yml
+    git add .github/workflows/publish.yml
+    git commit -qm 'test: reference missing self action'
+    run dev/self-pin.sh --check
+    assert_status 1
+    assert_output_contains "the pinned commit $W has no nope/action.yml"
+}
+
 @test "self-pin --check: fails on stale, mixed or unknown pins" {
     selfpin_repo
     git add -A
