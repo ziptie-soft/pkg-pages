@@ -112,11 +112,14 @@ has_args() {
     assert_status 143
     pid="$(cat "$TMP/agent.pid")"
     [ -n "$pid" ]
+    # A stopped agent can stay a zombie: it was reparented to PID 1, which in a CI `container:` job
+    # is `tail -f /dev/null` and never reaps it. A zombie holds no memory, so it counts as stopped.
+    running() { [ -e "/proc/$1" ] && ! grep -q '^[0-9]* ([^)]*) Z' "/proc/$1/stat" 2> /dev/null; }
     for _ in $(seq 20); do
-        kill -0 "$pid" 2> /dev/null || break
+        running "$pid" || break
         sleep 0.1
     done
-    refute kill -0 "$pid"
+    refute running "$pid"
 }
 
 @test "docker mode resolves ubuntu and fedora too" {
