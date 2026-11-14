@@ -342,7 +342,7 @@ jobs:
 
       - name: Sign the .rpm files
         if: ${{ steps.collect.outputs.has-rpm == 'true' }}
-        uses: ziptie-soft/pkg-pages/sign-rpm@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/sign-rpm@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
           packages: pkg-pages/rpm/*.rpm
           public-key: ${{ inputs.public-key }}
@@ -414,7 +414,7 @@ jobs:
           path: pkg-pages/test
 
       - name: Install and smoke-test
-        uses: ziptie-soft/pkg-pages/install-test@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/install-test@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
           packages: pkg-pages/test/*.${{ env.KIND }}
           distro: ${{ matrix.distro }}
@@ -505,7 +505,7 @@ jobs:
 
       - name: Fetch earlier releases' packages
         id: history
-        uses: ziptie-soft/pkg-pages/fetch-history@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/fetch-history@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
           dir: pkg-pages/packages/history
           map: pkg-pages/history.map
@@ -515,7 +515,7 @@ jobs:
 
       - name: Build the repositories
         id: build
-        uses: ziptie-soft/pkg-pages@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
           packages: pkg-pages/packages
           tag: ${{ inputs.tag }}
@@ -527,7 +527,7 @@ jobs:
           homepage: ${{ inputs.homepage }}
           base-url: ${{ inputs.base-url }}
           footer: ${{ inputs.footer }}
-          footer-version: 1.1.1 # pkg-pages self-pin
+          footer-version: 1.2.0 # pkg-pages self-pin
           packslip-project: ${{ inputs.packslip && format('github.com/{0}', github.repository) || '' }}
           packslip-pin: ${{ inputs.packslip-pin }}
           suite: ${{ inputs.suite }}
