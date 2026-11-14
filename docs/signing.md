@@ -121,9 +121,10 @@ Problems the scripts work around, all met in the source projects:
 - rpm 6 skips an identical re-signature, but errors with "already contains a legacy signature"
   when a *different* key's signature is added. Only tests hit this.
 - Verification uses `rpmkeys --dbpath <tmp>` and `_pkgverify_level signature`. Without it,
-  unsigned files pass on their digests.
-- The Ubuntu 24.04 runner's rpm 4.18 can't import a certificate with a revoked subkey, so
-  `build-repo` runs in Debian trixie.
+  unsigned files pass on their digests. The database holds the pin without revoked or expired
+  subkeys (`pin_rpm_key`), as dnf gets it, so a package signed by a revoked subkey fails.
+- rpm before 4.20 (Ubuntu 24.04's 4.18, RHEL 9's 4.16) can't import a certificate with a revoked
+  subkey, so `.rpm` checks import `pin_rpm_key`'s output instead of the pin.
 - gpg 2.4 has no `export-reset-subkey-passwd`. `ci-key` strips the passphrase in a temporary
   keyring with `--passwd` (old, empty, empty).
 - Scripted revocation needs `--batch --command-fd 0` and `key N` (an index, not a
