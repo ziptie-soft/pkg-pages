@@ -653,8 +653,7 @@ if [ "$has_rpm" = true ]; then
 fi
 if [ -n "$fpr" ]; then
     need "$name.asc"
-    gpg --batch --dearmor < "$pin" > "$work/pin.gpg"
-    verify() { gpgv --keyring "$work/pin.gpg" "$@" > /dev/null 2>&1 || die "self-check: $* does not verify against $pin"; }
+    verify() { gpg_verify "$pin" "$@"; }
     if [ "$has_deb" = true ]; then
         need "deb/dists/$suite/InRelease"
         verify "$out/deb/dists/$suite/InRelease"

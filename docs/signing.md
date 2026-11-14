@@ -126,6 +126,9 @@ Problems the scripts work around, all met in the source projects:
   keyring with `--passwd` (old, empty, empty).
 - Scripted revocation needs `--batch --command-fd 0` and `key N` (an index, not a
   fingerprint).
+- gpgv exits 0 for revoked and expired keys; only the status tokens tell. `gpg_verify` reads them
+  and refuses `REVKEYSIG`, `EXPKEYSIG` (unless asked), `EXPSIG`, `BADSIG`, `ERRSIG` and
+  `NO_PUBKEY`, and any primary other than the pin's.
 - Steps in a job with `container:` run with `sh` (dash), so `lib/` is POSIX sh.
 
 ## Tests

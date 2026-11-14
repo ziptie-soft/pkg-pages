@@ -103,6 +103,49 @@ signing_import() {
     printf '%s\n' "$_fpr"
 }
 
+# gpg_verify [--allow-expired] PIN SIG [DATA]: accept SIG (a clearsigned file when DATA is absent,
+# else a detached signature of DATA) only if it is valid, made by a key of PIN, and not by a
+# revoked or expired key. gpgv exits 0 for a revoked or expired key, so this reads its status
+# lines, whole tokens only:
+#   - gpgv exits 0, and there is exactly one VALIDSIG whose primary fingerprint ($12) is PIN's;
+#   - a GOODSIG (or EXPKEYSIG, see below) is present, and none of REVKEYSIG, EXPSIG, BADSIG, ERRSIG, NO_PUBKEY;
+#   - EXPKEYSIG (an expired key) fails, unless --allow-expired: then it passes with a warning.
+gpg_verify() {
+    _allow_expired=false
+    if [ "${1:-}" = --allow-expired ]; then
+        _allow_expired=true
+        shift
+    fi
+    [ "$#" -ge 2 ] || die "gpg_verify needs a public key and a signature"
+    _vpin="$1"
+    shift
+    require_tools gpg gpgv
+    _vfpr="$(pin_fpr "$_vpin")"
+    _vdir=''
+    make_tmpdir _vdir
+    gpg --batch --dearmor < "$_vpin" > "$_vdir/pin.gpg" 2> /dev/null || die "public-key $_vpin can't be read"
+    _vrc=0
+    _vstatus="$(gpgv --status-fd 1 --keyring "$_vdir/pin.gpg" "$@" 2> /dev/null)" || _vrc=$?
+    rm -rf "$_vdir"
+    [ "$_vrc" -eq 0 ] || die "$* does not verify against $_vpin (gpgv exit $_vrc)"
+    _vbad="$(printf '%s\n' "$_vstatus" |
+        awk '$1 == "[GNUPG:]" && ($2 == "REVKEYSIG" || $2 == "EXPSIG" || $2 == "BADSIG" || $2 == "ERRSIG" || $2 == "NO_PUBKEY") { print $2; exit }')"
+    [ -z "$_vbad" ] || die "$* does not verify against $_vpin ($_vbad)"
+    # gpgv reports an expired subkey as EXPKEYSIG instead of GOODSIG, so that counts as good here;
+    # it is refused below unless --allow-expired.
+    printf '%s\n' "$_vstatus" | awk '$1 == "[GNUPG:]" && ($2 == "GOODSIG" || $2 == "EXPKEYSIG") { f = 1 } END { exit !f }' ||
+        die "$* does not verify against $_vpin (no good signature)"
+    _vn="$(printf '%s\n' "$_vstatus" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { n++ } END { print n + 0 }')"
+    [ "$_vn" -eq 1 ] || die "$* does not verify against $_vpin ($_vn signatures, expected 1)"
+    _vsub="$(printf '%s\n' "$_vstatus" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { print $3 }')"
+    [ "$(printf '%s\n' "$_vstatus" | awk '$1 == "[GNUPG:]" && $2 == "VALIDSIG" { print $12 }')" = "$_vfpr" ] ||
+        die "$* is signed by a key that is not the primary $_vfpr of $_vpin"
+    if printf '%s\n' "$_vstatus" | awk '$1 == "[GNUPG:]" && $2 == "EXPKEYSIG" { f = 1 } END { exit !f }'; then
+        [ "$_allow_expired" = true ] || die "$* is signed by the expired subkey $_vsub of $_vpin"
+        warning "$* is signed by the expired subkey $_vsub of $_vpin"
+    fi
+}
+
 # rpm_verifies PIN FILE DB: true when FILE carries a valid signature by PIN. DB is an rpm database
 # directory that already holds PIN (rpm_db_with_pin). The signature level makes an unsigned
 # package fail instead of passing on its digests alone.
