@@ -389,6 +389,63 @@ dist/b/y.rpm" ]
     grep -qxF "$(sed -n 's/^FEDORA_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
 }
 
+# sign_history: run sign-rpm for a history directory and its map (this release's packages: none).
+sign_history() {
+    mkdir -p hist
+    : > hist.map
+    export INPUT_HISTORY="${INPUT_HISTORY-hist}" INPUT_HISTORY_MAP="${INPUT_HISTORY_MAP-hist.map}"
+    run "$LIB/action.sh" sign-rpm
+}
+
+@test "sign-rpm with a history and no packages: one run, the map and the directory marked as written" {
+    sign_history
+    assert_status 0
+    [ "$(arg_after sign-history)" = --map ]
+    [ "$(arg_after --map)" = hist.map ]
+    [ "$(arg_after --resign-unproven)" = false ]
+    [ "$(writes)" = "hist
+hist.map" ]
+    # The key by name, in a tmpfs home, as for the other files.
+    grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
+    [ "$(arg_after --tmpfs)" = /pkg-pages-gnupg:rw,mode=0700 ]
+    grep -qxF "$(sed -n 's/^FEDORA_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+    [ "$(output_value history-map)" = hist.map ]
+    refute grep -qx sign-rpm "$TMP/docker.args"
+}
+
+@test "sign-rpm signs this release's files first, then the history, and resign-history passes on" {
+    mkdir -p dist
+    touch dist/x.rpm
+    export INPUT_PACKAGES=dist/x.rpm INPUT_RESIGN_HISTORY=true
+    sign_history
+    assert_status 0
+    # The fake engine keeps the last command line: the history run.
+    [ "$(arg_after --resign-unproven)" = true ]
+    [ "$(arg_after sign-history)" = --map ]
+    [ "$(output_value history-map)" = hist.map ]
+    export INPUT_HISTORY='' INPUT_HISTORY_MAP=''
+    run "$LIB/action.sh" sign-rpm
+    assert_status 0
+    [ "$(arg_after sign-rpm)" = dist/x.rpm ]
+}
+
+@test "sign-rpm needs packages or a history, takes history and history-map together, and checks them" {
+    run "$LIB/action.sh" sign-rpm
+    assert_status 1
+    assert_output_contains "packages is empty"
+    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=''
+    sign_history; assert_status 1; assert_output_contains "together"
+    export INPUT_HISTORY='' INPUT_HISTORY_MAP=hist.map
+    sign_history; assert_status 1; assert_output_contains "together"
+    export INPUT_HISTORY=../hist INPUT_HISTORY_MAP=hist.map
+    sign_history; assert_status 1
+    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=/tmp/hist.map
+    sign_history; assert_status 1
+    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=hist.map INPUT_RESIGN_HISTORY=maybe
+    sign_history; assert_status 1
+    [ ! -e "$TMP/docker.args" ]
+}
+
 @test "packages: several lines, blank lines ignored, each must match" {
     mkdir -p dist
     touch dist/x.rpm dist/y.rpm

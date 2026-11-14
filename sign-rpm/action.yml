@@ -1,13 +1,36 @@
 # sign-rpm: sign .rpm files in place with the CI subkey, after checking the key fails closed
-# against the committed pin, then verify them against the pin. Contract: docs/actions.md#sign-rpm.
+# against the committed pin, then verify them against the pin. With history, earlier releases'
+# .rpm files follow the current subkey too. Contract: docs/actions.md#sign-rpm.
 name: pkg-pages sign-rpm
 description: Sign .rpm files with a CI signing subkey checked against a committed public key
 author: ziptie-soft
 
 inputs:
   packages:
-    description: Newline-separated paths or globs of the .rpm files to sign in place.
-    required: true
+    description: >-
+      Newline-separated paths or globs of the .rpm files to sign in place (this release's). Each
+      line must match a file. May be empty when history is set.
+    required: false
+    default: ''
+  history:
+    description: >-
+      Directory of earlier releases' packages (fetch-history's dir). Every .rpm that the current
+      subkey didn't sign is signed again in place, if its bytes are proven. Needs history-map.
+    required: false
+    default: ''
+  history-map:
+    description: >-
+      The map fetch-history wrote for history. It is rewritten with the new SHA-256 of each file
+      signed again. Needs history.
+    required: false
+    default: ''
+  resign-history:
+    description: >-
+      Sign again an earlier release's .rpm from a GitHub release that doesn't verify against the
+      pin, with a warning (true), or fail on it (false). A one-run bootstrap tool: a file proven by
+      the site's manifest needs no such permission.
+    required: false
+    default: 'false'
   public-key:
     description: Path of the committed public key (the pin), in the caller's checkout.
     required: false
@@ -28,6 +51,9 @@ outputs:
   fingerprint:
     description: Primary key fingerprint of the pin, when signed.
     value: ${{ steps.run.outputs.fingerprint }}
+  history-map:
+    description: The history map's path (rewritten after signing), when history is set.
+    value: ${{ steps.run.outputs.history-map }}
 
 runs:
   using: composite
@@ -37,6 +63,9 @@ runs:
       shell: bash
       env:
         INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_HISTORY: ${{ inputs.history }}
+        INPUT_HISTORY_MAP: ${{ inputs.history-map }}
+        INPUT_RESIGN_HISTORY: ${{ inputs.resign-history }}
         INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
         INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
         REPO_SIGNING_KEY: ${{ inputs.signing-key }}

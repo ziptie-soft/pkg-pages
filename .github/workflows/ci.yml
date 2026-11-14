@@ -473,6 +473,17 @@ jobs:
           tags: v1.0.0
           map: history.map
 
+      # The history follows the current subkey: files it signed are left alone, others that the
+      # manifest proved are signed again. Here site 1's files are the current subkey's own.
+      - name: sign-rpm (the history)
+        id: sign-history
+        uses: ./sign-rpm
+        with:
+          history: history
+          history-map: ${{ steps.history.outputs.map }}
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
       - name: sign-rpm (1.1.0)
         uses: ./sign-rpm
         with:
@@ -486,7 +497,7 @@ jobs:
         with:
           packages: dist-1.1.0
           history: history
-          history-map: ${{ steps.history.outputs.map }}
+          history-map: ${{ steps.sign-history.outputs.history-map }}
           keyring: keyring
           tag: v1.1.0
           version: 1.1.0
@@ -518,10 +529,15 @@ jobs:
       - name: Check the history and the second site
         env:
           HISTORY_TAGS: ${{ steps.history.outputs.tags }}
-          HISTORY_MAP: ${{ steps.history.outputs.map }}
+          HISTORY_MAP: ${{ steps.sign-history.outputs.history-map }}
         run: |
           set -euo pipefail
           test "${HISTORY_TAGS}" = v1.0.0
+          test "${HISTORY_MAP}" = history.map
+          # Every file of the map is still the bytes the map names, after sign-rpm rewrote it.
+          while IFS=$'\t' read -r _ sha path _; do
+            echo "${sha}  history/${path}" | sha256sum --check --quiet -
+          done < "${HISTORY_MAP}"
           # The map names every fetched file by its tag, SHA-256 and path; the keyring has no tag.
           test "$(cut -f4 "${HISTORY_MAP}" | sort -u)" = site
           grep -qP '^v1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/pptest_1\.0\.0-1_amd64\.deb\tsite$' "${HISTORY_MAP}"
