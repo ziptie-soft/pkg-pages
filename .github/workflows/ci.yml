@@ -238,7 +238,6 @@ jobs:
           public-key: test-signing/repo.asc
           signing-key: ${{ steps.fixtures.outputs.key }}
           tag: v1.0.0
-          keyring-package: 'true'
           resign-history: 'true'
           artifact-name: pkg-pages-selftest-site
           retention-days: '1'
@@ -316,7 +315,7 @@ jobs:
           test -s site/deb/dists/stable/InRelease
           test -s site/rpm/x86_64/repodata/repomd.xml.asc
           grep -q '&lt;self-test&gt;' site/index.html
-          # tag and keyring-package: a signed manifest, and the keyring package the .list names.
+          # tag, and keyring-package by default: a signed manifest, and the keyring package the .list names.
           test -s site/pkg-pages.tsv.asc
           grep -qP '^release\tv1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/' site/pkg-pages.tsv
           # The earlier release stays in the site under its own tag, its .rpm signed again.

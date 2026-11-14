@@ -120,9 +120,9 @@ inputs:
     description: >-
       Publish a <name>-keyring .deb that carries the public key, which the .list then uses as the
       APT key and the landing page installs first (signed sites with .deb files only; else a
-      notice). A .deb only: rpm can't import a key from a package scriptlet.
+      notice). A .deb only: rpm can't import a key from a package scriptlet. false opts out.
     required: false
-    default: 'false'
+    default: 'true'
   directory-listings:
     description: Write an index.html into every directory (Pages serves no listings of its own).
     required: false

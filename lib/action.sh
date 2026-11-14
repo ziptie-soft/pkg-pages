@@ -193,7 +193,7 @@ build_repo() {
     br_name="$(name_input)"
     br_base_url="$(base_url_input)"
     export INPUT_NAME="$br_name" INPUT_BASE_URL="$br_base_url"
-    br_keyring_package="$(input_or KEYRING_PACKAGE false)"
+    br_keyring_package="$(input_or KEYRING_PACKAGE true)"
     check_bool keyring-package "$br_keyring_package"
     check_bool resign-history "$(input_or RESIGN_HISTORY true)"
     check_bool upload "$(input_or UPLOAD true)"
@@ -209,6 +209,13 @@ build_repo() {
         br_signed=true
         [ -f "$br_pin" ] || die "signing-key is set but public-key $br_pin does not exist (docs/signing.md#fail-closed-matrix)"
         [ -n "$signing_key" ] || die "public-key $br_pin exists but signing-key is empty (docs/signing.md#fail-closed-matrix)"
+    fi
+
+    # sign-rpm takes patterns: a path with a pattern character would match something else.
+    if [ "$br_signed" = true ]; then
+        case "$br_work/$(find "$br_packages" -type f -name '*.rpm')" in
+            *'*'* | *'?'* | *'['* | *\\*) die "packages or out: a path holds one of * ? [ \\, which sign-rpm would read as a pattern" ;;
+        esac
     fi
 
     mkdir "$br_work"
@@ -253,10 +260,6 @@ build_repo() {
             [ -z "$(find "$br_sb_history" -name '*.rpm' | head -n 1)" ] || br_hist_rpm=true
         fi
         br_rpms="$(find "$br_sb_packages" -type f -name '*.rpm' | LC_ALL=C sort)"
-        # sign-rpm takes patterns: a name with a pattern character would match something else.
-        case "$br_rpms" in
-            *'*'* | *'?'* | *'['* | *\\*) die "packages: an .rpm path holds one of * ? [ \\, which sign-rpm would read as a pattern" ;;
-        esac
         if [ -n "$br_rpms" ] || [ "$br_hist_rpm" = true ]; then
             export INPUT_PACKAGES="$br_rpms" INPUT_HISTORY='' INPUT_HISTORY_MAP=''
             [ "$br_hist_rpm" = false ] || export INPUT_HISTORY="$br_sb_history" INPUT_HISTORY_MAP="$br_sb_map"
