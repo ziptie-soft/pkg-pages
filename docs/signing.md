@@ -36,6 +36,8 @@ What `import` (shared by `sign-rpm` and `build-repo`) does:
 | yes | passphrase-protected, expired or revoked | **fail** (probe signature) |
 | yes | more than one secret key | **fail** |
 
+A signed run also warns when the signing subkey expires within 90 days, so there is time to rotate.
+
 ## Setting up a project
 
 Run these on your own machine, not in CI. The commands work in fish and bash. `<DIR>` is a

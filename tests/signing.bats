@@ -82,6 +82,16 @@ setup_file() {
     g "$K/p/home" --armor --export "$fpr" > "$K/p/pin.asc"
     g "$K/p/home" --passphrase pw --armor --export-secret-subkeys "$sub!" > "$K/p/ci.asc"
 
+    # s: a signing subkey that expires in 30 days, for the expiry warning.
+    mkdir -p "$K/s/home" && chmod 700 "$K/s/home"
+    g "$K/s/home" --passphrase '' --quick-gen-key 'project s <s@example.invalid>' rsa2048 cert never 2> /dev/null
+    fpr="$(g "$K/s/home" --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
+    g "$K/s/home" --passphrase '' --quick-add-key "$fpr" rsa2048 sign 30d 2> /dev/null
+    sub="$(g "$K/s/home" --with-colons --with-subkey-fingerprints --list-keys |
+        awk -F: '$1 == "sub" { s = 1; next } $1 == "fpr" && s { print $10; exit }')"
+    g "$K/s/home" --armor --export "$fpr" > "$K/s/pin.asc"
+    g "$K/s/home" --passphrase '' --armor --export-secret-subkeys "$sub!" > "$K/s/ci.asc"
+
     # Test packages, when rpmbuild is there.
     if command -v rpmbuild > /dev/null; then
         "$FIXTURES" rpm "$BATS_FILE_TMPDIR/rpms" hello 1.0.0 noarch
@@ -419,6 +429,21 @@ rpms() {
     assert_status 0
     [ -s "$TMP/tools.env" ]
     refute grep -q '^REPO_SIGNING_KEY=' "$TMP/tools.env"
+}
+
+# --- The expiry warning ------------------------------------------------------------------------
+
+@test "import warns when the signing subkey expires within 90 days" {
+    import "$K/s/pin.asc" "$K/s/ci.asc"
+    assert_status 0
+    assert_output_contains "warning:"
+    assert_output_contains "expires in"
+}
+
+@test "import does not warn about a subkey that expires in three years" {
+    import "$K/a/pin.asc" "$K/a/ci.asc"
+    assert_status 0
+    refute grep -q "expires in" <<< "$output"
 }
 
 # --- gpg_verify -------------------------------------------------------------------------------
