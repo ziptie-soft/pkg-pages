@@ -113,9 +113,10 @@ inputs:
       verify against public-key is unproven: sign it again with a warning (true), or fail on it
       (false). Files proven by the live site's manifest need no permission, and are signed again
       with the current subkey whenever it didn't sign them. This release's packages are always
-      signed.
+      signed. A one-run bootstrap tool (a site that predates signing, or a lost one), never a
+      default: check where the files came from first.
     required: false
-    default: 'true'
+    default: 'false'
   keyring-package:
     description: >-
       Publish a <name>-keyring .deb that carries the public key, which the .list then uses as the

@@ -204,7 +204,7 @@ jobs:
           distro: ubuntu
 
       # The history's .rpm files are unsigned and from a release, so nothing proves their bytes:
-      # without resign-history the build stops, before it makes a site.
+      # by default (resign-history is false) the build stops, before it makes a site.
       - name: build-repo (unproven history, must fail)
         id: unproven
         continue-on-error: true
@@ -218,7 +218,6 @@ jobs:
           name: pptest
           public-key: test-signing/repo.asc
           signing-key: ${{ steps.fixtures.outputs.key }}
-          resign-history: 'false'
           out: site-unproven
           upload: 'false'
 
