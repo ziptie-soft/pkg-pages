@@ -67,10 +67,43 @@ build_repo() {
     [ "$(arg_after --footer)" = true ]
     [ "$(arg_after --resign-history)" = true ]
     [ "$(arg_after --import-key)" = true ]
+    # No tag and no map: no manifest, and no keyring package, as before.
+    [ -z "$(arg_after --tag)" ]
+    [ -z "$(arg_after --history-map)" ]
+    [ "$(arg_after --keyring-package)" = false ]
     [ "$(arg_after --tmpfs)" = /pkg-pages-gnupg:rw,mode=0700 ]
     grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
     grep -qxF "$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
     [ "$(arg_after --network)" = none ]
+}
+
+@test "build-repo passes the tag, the history map and keyring-package through" {
+    : > hist.map
+    export INPUT_TAG=v1.2.3 INPUT_HISTORY_MAP=hist.map INPUT_KEYRING_PACKAGE=true
+    build_repo
+    assert_status 0
+    [ "$(arg_after --tag)" = v1.2.3 ]
+    [ "$(arg_after --history-map)" = hist.map ]
+    [ "$(arg_after --keyring-package)" = true ]
+    # The map is read, never written: only the site is handed back.
+    [ "$(writes)" = site ]
+}
+
+@test "build-repo: a history map needs a tag, and the new inputs are checked" {
+    export INPUT_HISTORY_MAP=hist.map
+    build_repo
+    assert_status 1
+    assert_output_contains "history-map needs tag"
+    export INPUT_TAG=v1 INPUT_HISTORY_MAP=../hist.map
+    build_repo
+    assert_status 1
+    export INPUT_HISTORY_MAP=/tmp/hist.map
+    build_repo
+    assert_status 1
+    unset INPUT_HISTORY_MAP
+    export INPUT_KEYRING_PACKAGE=yes
+    build_repo
+    assert_status 1
 }
 
 @test "build-repo: a user site (<owner>.github.io) is served at the root" {

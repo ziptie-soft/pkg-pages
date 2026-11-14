@@ -147,6 +147,14 @@ build_repo() {
     name="$(name_input)"
     base_url="$(base_url_input)"
     homepage="$(homepage_input)"
+    # tag turns on the signed manifest; history-map says which of the packages are earlier releases'.
+    tag="$(input TAG)" history_map="$(input HISTORY_MAP)"
+    [ -z "$history_map" ] || {
+        [ -n "$tag" ] || die "history-map needs tag"
+        check_relpath history-map "$history_map"
+    }
+    keyring_package="$(input_or KEYRING_PACKAGE false)"
+    check_bool keyring-package "$keyring_package"
     listings="$(input DIRECTORY_LISTINGS)"
     footer="$(input FOOTER)"
     check_bool upload "$(input_or UPLOAD true)"
@@ -169,6 +177,7 @@ build_repo() {
         --nix-archives "$nix_archives" --nix-binaries "$nix_binaries" --nix-url-base "$nix_url_base" \
         --public-key "$pin" \
         --resign-history "$(input_or RESIGN_HISTORY true)" \
+        --tag "$tag" --history-map "$history_map" --keyring-package "$keyring_package" \
         --directory-listings "${listings:-true}" \
         --footer "${footer:-true}" \
         --footer-version "$(input FOOTER_VERSION)" \
