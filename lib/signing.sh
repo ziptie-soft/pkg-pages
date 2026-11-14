@@ -180,16 +180,22 @@ rpm_verifies() {
     rpmkeys --dbpath "$3" --define '_pkgverify_level signature' --checksig "$2" > /dev/null 2>&1
 }
 
-# rpm_db_with_pin PIN VAR: create a temporary rpm database holding only PIN, path in VAR.
+# rpm_db_with_pin PIN VAR: create a temporary rpm database holding only the dnf key of PIN
+# (pin_rpm_key: no revoked or expired subkeys), path in VAR. That is the key dnf clients get
+# through gpgkey=, and rpm before 4.20 can't import a pin that carries a revoked subkey. A file
+# signed by a revoked subkey therefore fails, on every rpm version.
 rpm_db_with_pin() {
     make_tmpdir "$2"
     _rdb=''
     eval "_rdb=\$$2"
-    rpmkeys --dbpath "$_rdb" --import "$1" || die "rpmkeys could not import public-key $1"
+    _rkdir=''
+    make_tmpdir _rkdir
+    pin_rpm_key "$1" "$_rkdir/key.asc"
+    rpmkeys --dbpath "$_rdb" --import "$_rkdir/key.asc" || die "rpmkeys could not import public-key $1"
 }
 
-# check_rpm PIN FILE...: fail unless every FILE has a valid signature by PIN, as dnf checks with
-# gpgcheck=1. Needs only rpmkeys, no secret.
+# check_rpm PIN FILE...: fail unless every FILE has a valid signature by a subkey of PIN that is
+# neither revoked nor expired, as dnf checks with gpgcheck=1 (it imports pin_rpm_key's output). Needs only rpmkeys, no secret.
 check_rpm() {
     _pin="$1"
     shift

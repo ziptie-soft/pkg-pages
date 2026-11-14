@@ -262,7 +262,8 @@ sign-linux:
 
 `uses: ziptie-soft/pkg-pages/check-rpm@<sha>` (`lib/linux-signing.sh check-rpm`; Fedora image).
 
-It runs `rpmkeys --import <pin>` into a temporary database, then
+It runs `rpmkeys --import` of the pin without its revoked or expired subkeys (the key dnf gets
+through `gpgkey=`; rpm before 4.20 can't import a revoked subkey) into a temporary database, then
 `rpmkeys --define '_pkgverify_level signature' --checksig` on each file. Without the signature
 level, unsigned files would pass on their digests. It needs no secret. When the pin is absent,
 it passes with a notice if `allow-unsigned` is `'true'` and fails otherwise.
