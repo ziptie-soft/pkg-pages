@@ -99,6 +99,12 @@ signing_import() {
             --local-user "$_sub!" --sign > /dev/null 2>&1 ||
             die "signing subkey $_sub can't sign: passphrase-protected, expired, revoked or not a signing key"
     done
+    # Warn while there is time to rotate: field 7 of an ssb record is the expiry (empty: never).
+    _soon="$(gpg --batch --with-colons --with-subkey-fingerprints --list-secret-keys |
+        awk -F: -v now="$(date +%s)" '$1 == "ssb" { e = $7; next } $1 == "fpr" && e != "" { if (e - now < 90 * 86400) print $10 " " e; e = "" } $1 == "fpr" { e = "" }')"
+    printf '%s\n' "$_soon" | while read -r _s _e; do
+        [ -z "$_s" ] || warning "signing subkey $_s expires in $(((_e - $(date +%s)) / 86400)) day(s): rotate before then (docs/signing.md)"
+    done
     log "imported signing subkey $(printf '%s' "$_subs" | tr '\n' ' ') of $_fpr"
     printf '%s\n' "$_fpr"
 }
