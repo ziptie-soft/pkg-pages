@@ -9,6 +9,7 @@
 | `signing.bats` | every row of the fail-closed matrix, rotation, revocation, expiry, signing and checking `.rpm` files |
 | `pages-repo.bats` | the site layout, metadata handling, signing, the landing page, `extra-site`, installing from the site with apt and dnf, tampering |
 | `nix-flake.bats` | archive validation, lock sanity, SHA-256 pins, and deterministic flake tarballs |
+| `build-keyring.bats` | the keyring `.deb`: version from the pin, reproducible build, the pin inside, the standby-subkey notice |
 | `fetch-history.bats` | release selection and downloads, against a fake `gh` |
 | `install-test.bats` | installs and smoke commands, signature checks before an `.rpm` install |
 | `package-rust.bats` | building the fixture crate with cargo-deb and cargo-generate-rpm |

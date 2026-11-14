@@ -13,6 +13,7 @@ unchanged on a developer's machine and in the `images.env` containers, which is 
 | `pages-repo.sh` | Builds the APT and DNF site from a directory of packages, signs it, and checks the result |
 | `nix-flake.sh` | Builds an optional deterministic flake tarball for prebuilt archives, pinned by SHA-256 |
 | `linux-signing.sh` | `import`, `sign-rpm` and `check-rpm` against the committed public key |
+| `build-keyring.sh` | Builds the `<name>-keyring` `.deb` that carries the pin, with a version taken from the pin's newest signature |
 | `fetch-history.sh` | Downloads earlier releases' packages with `gh` |
 | `install-test.sh` | Installs packages in a clean distribution container and runs a smoke command |
 | `package-rust.sh` | Builds a crate's `.deb` and `.rpm` with cargo-deb and cargo-generate-rpm |
