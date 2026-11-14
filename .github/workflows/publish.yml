@@ -504,9 +504,11 @@ jobs:
           path: pkg-pages/nix
 
       - name: Fetch earlier releases' packages
+        id: history
         uses: ziptie-soft/pkg-pages/fetch-history@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           dir: pkg-pages/packages/history
+          map: pkg-pages/history.map
           keep: ${{ inputs.keep-releases }}
           patterns: ${{ inputs.history-patterns }}
           exclude-tag: ${{ inputs.tag }}
@@ -516,6 +518,8 @@ jobs:
         uses: ziptie-soft/pkg-pages@ea1ad7e0cdbd009a18b70010f9eb8d279358c182 # v1.1.1 pkg-pages self-pin
         with:
           packages: pkg-pages/packages
+          tag: ${{ inputs.tag }}
+          history-map: ${{ steps.history.outputs.map }}
           version: ${{ inputs.version }}
           name: ${{ inputs.name }}
           title: ${{ inputs.title }}
