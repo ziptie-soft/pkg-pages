@@ -10,7 +10,8 @@ unchanged on a developer's machine and in the `images.env` containers, which is 
 | `action.sh` | The run step of every action: reads `INPUT_*`, validates, fills in defaults, calls `run.sh` |
 | `run.sh` | Runs a command on the runner (`host`) or in a pinned container (`docker`), with an optional private `GNUPGHOME` |
 | `in-container.sh` | Entry point of those containers: installs the tools, runs the command, hands written files back to the runner user |
-| `pages-repo.sh` | Builds the APT and DNF site from a directory of packages, signs it, and checks the result |
+| `pages-repo.sh` | Builds the APT and DNF site from a directory of packages in one process: signs the `.rpm` files, builds the optional keyring package, then runs the three stages below |
+| `site-build.sh` | Lays the site out and holds no key: the repositories, the landing page, `pkg-pages.tsv` and the list of files to sign |
 | `site-seal.sh` | Signs a site's metadata files from a to-sign list (`Release`, `repomd.xml`, `pkg-pages.tsv`), the only step that holds the key |
 | `site-check.sh` | Checks a built site as a client sees it: the layout, every signature against the pin, and the manifest |
 | `nix-flake.sh` | Builds an optional deterministic flake tarball for prebuilt archives, pinned by SHA-256 |

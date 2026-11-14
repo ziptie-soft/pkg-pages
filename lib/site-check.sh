@@ -184,7 +184,7 @@ if [ -e "$manifest" ] || [ -L "$manifest" ]; then
             *) fail "pkg-pages.tsv line $n: unknown kind '$kind'" ;;
         esac
         printf '%s\n' "$sum" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || fail "pkg-pages.tsv line $n: bad SHA-256 '$sum'"
-        if ! printf '%s\n' "$path" | LC_ALL=C grep -Eq '^(deb/pool/[A-Za-z0-9._+/-]+\.deb|rpm/[A-Za-z0-9_-]+/[A-Za-z0-9._+-]+\.rpm)$'; then
+        if ! printf '%s\n' "$path" | LC_ALL=C grep -Eq '^(deb/pool/[A-Za-z0-9._+~/-]+\.deb|rpm/[A-Za-z0-9_-]+/[A-Za-z0-9._+~-]+\.rpm)$'; then
             fail "pkg-pages.tsv line $n: bad path '$path'"
         fi
         case "/$path/" in *//* | */./* | */../*) fail "pkg-pages.tsv line $n: bad path '$path'" ;; esac
