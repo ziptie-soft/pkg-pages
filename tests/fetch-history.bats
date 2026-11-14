@@ -493,6 +493,29 @@ EOF
     cmp "$TMP/map" "$TMP/expected"
 }
 
+@test "site: fetches verified Debian and RPM paths with pre-release tildes" {
+    mysite
+    tag='v1.2.3~rc1-1'
+    deb_path='deb/pool/main/h/hello/hello_1.2.3~rc1-1_amd64.deb'
+    rpm_path='rpm/x86_64/hello-1.2.3~rc1-1.x86_64.rpm'
+    mkdir -p "$FAKE_SITE/$(dirname "$deb_path")" "$FAKE_SITE/$(dirname "$rpm_path")"
+    printf 'debian pre-release package\n' > "$FAKE_SITE/$deb_path"
+    printf 'rpm pre-release package\n' > "$FAKE_SITE/$rpm_path"
+    rawsite \
+        "release\t$tag\t$(sha "$FAKE_SITE/$deb_path")\t$deb_path" \
+        "release\t$tag\t$(sha "$FAKE_SITE/$rpm_path")\t$rpm_path"
+
+    sfetch --tags "$tag" --map "$TMP/map"
+    assert_status 0
+    [ "$(output_value tags)" = "$tag" ]
+    cmp "$TMP/history/$deb_path" "$FAKE_SITE/$deb_path"
+    cmp "$TMP/history/$rpm_path" "$FAKE_SITE/$rpm_path"
+    printf '%s\t%s\t%s\tsite\n%s\t%s\t%s\tsite\n' \
+        "$tag" "$(sha "$FAKE_SITE/$deb_path")" "$deb_path" \
+        "$tag" "$(sha "$FAKE_SITE/$rpm_path")" "$rpm_path" > "$TMP/expected-map"
+    cmp "$TMP/map" "$TMP/expected-map"
+}
+
 @test "site: without --map nothing but the files is written" {
     mysite
     sfetch --tags v1.1.0

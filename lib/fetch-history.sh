@@ -279,7 +279,7 @@ if [ "$keep" -gt 0 ]; then
                 if ($1 == "release" && ($2 == "-" || $2 !~ /^[!-~]+$/)) bad("not a tag: \"" $2 "\"")
                 if ($1 == "keyring" && $2 != "-") bad("a keyring line has the tag -")
                 p = $4
-                if (p !~ /^deb\/pool\/[A-Za-z0-9._+\/-]+\.deb$/ && p !~ /^rpm\/[A-Za-z0-9_-]+\/[A-Za-z0-9._+-]+\.rpm$/) bad("not a package path: \"" p "\"")
+                if (p !~ /^deb\/pool\/[A-Za-z0-9._+~\/-]+\.deb$/ && p !~ /^rpm\/[A-Za-z0-9_-]+\/[A-Za-z0-9._+~-]+\.rpm$/) bad("not a package path: \"" p "\"")
                 if (("/" p "/") ~ /\/\.\.?\// || p ~ /\/\// || p ~ /\/\.(deb|rpm)$/) bad("not a package path: \"" p "\"")
                 if ($1 == "keyring") {
                     b = p; sub(/.*\//, "", b)
