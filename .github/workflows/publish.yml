@@ -396,7 +396,7 @@ jobs:
       - name: Build the keyring package
         id: keyring
         if: ${{ inputs.keyring-package && steps.pin.outputs.present == 'true' }}
-        uses: ziptie-soft/pkg-pages/build-keyring@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/build-keyring@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           public-key: ${{ inputs.public-key }}
           name: ${{ inputs.name }}
@@ -487,7 +487,7 @@ jobs:
 
       - name: Fetch earlier releases' packages
         id: fetch
-        uses: ziptie-soft/pkg-pages/fetch-history@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/fetch-history@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           dir: pkg-pages/history
           from: ${{ inputs.history-from }}
@@ -562,7 +562,7 @@ jobs:
 
       - name: Sign the .rpm files
         if: ${{ needs.prepare.outputs.has-rpm == 'true' || needs.history.outputs.has-history == 'true' }}
-        uses: ziptie-soft/pkg-pages/sign-rpm@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/sign-rpm@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           packages: ${{ needs.prepare.outputs.has-rpm == 'true' && 'pkg-pages/rpm/*.rpm' || '' }}
           history: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history' || '' }}
@@ -650,7 +650,7 @@ jobs:
           path: pkg-pages/test
 
       - name: Install and smoke-test
-        uses: ziptie-soft/pkg-pages/install-test@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/install-test@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           packages: pkg-pages/test/*.${{ env.KIND }}
           distro: ${{ matrix.distro }}
@@ -761,7 +761,7 @@ jobs:
 
       - name: Build the repositories
         id: build
-        uses: ziptie-soft/pkg-pages/build-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/build-site@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           packages: pkg-pages/packages
           history: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history' || '' }}
@@ -775,7 +775,7 @@ jobs:
           homepage: ${{ inputs.homepage }}
           base-url: ${{ inputs.base-url }}
           footer: ${{ inputs.footer }}
-          footer-version: 1.2.0 # pkg-pages self-pin
+          footer-version: 2.0.0 # pkg-pages self-pin
           packslip-project: ${{ inputs.packslip && format('github.com/{0}', github.repository) || '' }}
           packslip-pin: ${{ inputs.packslip-pin }}
           suite: ${{ inputs.suite }}
@@ -878,7 +878,7 @@ jobs:
 
       - name: Sign the metadata
         id: seal
-        uses: ziptie-soft/pkg-pages/seal-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/seal-site@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           site: pkg-pages/seal/site
           to-sign: pkg-pages/seal/to-sign.txt
@@ -936,7 +936,7 @@ jobs:
 
       - name: Check the repositories
         id: check
-        uses: ziptie-soft/pkg-pages/check-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/check-site@c58904105183e914a966d61ec34c212edcba624d # v2.0.0 pkg-pages self-pin
         with:
           site: pkg-pages/site
           public-key: pkg-pages/public-key/repo.asc
