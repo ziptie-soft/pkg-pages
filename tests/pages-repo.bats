@@ -528,7 +528,8 @@ apt_only() {
     gpgv --keyring "$TMP/pin.gpg" "$s/rpm/x86_64/repodata/repomd.xml.asc" "$s/rpm/x86_64/repodata/repomd.xml"
     grep -qx gpgcheck=1 "$s/rpm/hello.repo"
     grep -qx repo_gpgcheck=1 "$s/rpm/hello.repo"
-    grep -qx "gpgkey=file://$TMP/site/hello.asc" "$s/rpm/hello.repo"
+    grep -qx "gpgkey=file://$TMP/site/rpm/RPM-GPG-KEY-hello" "$s/rpm/hello.repo"
+    [ -s "$s/rpm/RPM-GPG-KEY-hello" ]
     grep -q 'signed-by=/etc/apt/keyrings/hello.asc' "$s/deb/hello.list"
     grep -q "$(cat "$K/a/fpr")" "$s/index.html"
     "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" check-rpm "$s"/rpm/*/*.rpm
@@ -1123,6 +1124,154 @@ presign() {
     sb
     assert_status 1
     assert_output_contains "not hello-keyring_<version>_all.deb"
+}
+
+# --- The key dnf imports ---------------------------------------------------------------------
+
+# rot_keys: once per file, two keys that need the dnf key to differ from the pin:
+#   r  subkey 1 revoked, subkey 2 added: pin-rotated.asc, and ci2.asc (subkey 2 alone)
+#   x  a signing subkey that expired (made in a faked 2020), then a valid one: pin.asc, ci.asc
+rot_keys() {
+    need gpg
+    [ ! -d "$K/x" ] || return 0
+    g() { home="$1"; shift; gpg --homedir "$home" --batch --quiet --pinentry-mode loopback --passphrase '' "$@"; }
+    "$FIXTURES" key "$K/r" "project r"
+    fpr="$(cat "$K/r/fpr")"
+    sleep 1
+    printf 'key 1\nrevkey\ny\n0\n\ny\nsave\n' |
+        gpg --homedir "$K/r/home" --batch --pinentry-mode loopback --passphrase '' \
+            --command-fd 0 --status-fd 2 --edit-key "$fpr" 2> /dev/null
+    g "$K/r/home" --quick-add-key "$fpr" rsa2048 sign 3y 2> /dev/null
+    sub2="$(g "$K/r/home" --with-colons --with-subkey-fingerprints --list-keys |
+        awk -F: '$1 == "sub" && $2 != "r" { s = 1; next } $1 == "fpr" && s { print $10; exit }')"
+    g "$K/r/home" --armor --export "$fpr" > "$K/r/pin-rotated.asc"
+    g "$K/r/home" --armor --export-secret-subkeys "$sub2!" > "$K/r/ci2.asc"
+    printf '%s\n' "$sub2" > "$K/r/sub2"
+
+    mkdir -p "$K/x/home" && chmod 700 "$K/x/home"
+    old='--faked-system-time=20200101T000000!'
+    g "$K/x/home" "$old" --quick-gen-key 'project x <x@example.invalid>' rsa2048 cert never 2> /dev/null
+    fpr="$(g "$K/x/home" --with-colons --list-keys | awk -F: '$1 == "fpr" { print $10; exit }')"
+    g "$K/x/home" "$old" --quick-add-key "$fpr" rsa2048 sign 1d 2> /dev/null
+    g "$K/x/home" --quick-add-key "$fpr" rsa2048 sign 3y 2> /dev/null
+    sub2="$(g "$K/x/home" --with-colons --with-subkey-fingerprints --list-keys |
+        awk -F: '$1 == "fpr" { f = $10 } END { print f }')"
+    g "$K/x/home" --armor --export "$fpr" > "$K/x/pin.asc"
+    g "$K/x/home" --armor --export-secret-subkeys "$sub2!" > "$K/x/ci.asc"
+    printf '%s\n' "$sub2" > "$K/x/sub2"
+}
+
+# build_keyed PIN CI [OPTION]...: build_signed with another key.
+build_keyed() {
+    pin="$1" ci="$2"
+    shift 2
+    if [ -d "$TMP/gnupg" ]; then
+        gpgconf --homedir "$TMP/gnupg" --kill all > /dev/null 2>&1 || true
+        rm -rf "$TMP/gnupg"
+    fi
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$ci")"
+    export REPO_SIGNING_KEY
+    build --public-key "$pin" --import-key true "$@"
+}
+
+# colons FILE: the --with-colons listing of a public key file.
+colons() { gpg --batch --with-colons --show-keys "$1" 2> /dev/null; }
+
+@test "dnf key: a revoked subkey is left out, the current one is in, and everything verifies against it alone" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    rot_keys
+    pkgs rpm
+    build_keyed "$K/r/pin-rotated.asc" "$K/r/ci2.asc"
+    assert_status 0
+    s="$TMP/site"
+    key="$s/rpm/RPM-GPG-KEY-hello"
+    # The pin is published whole, for APT and for revocations; the dnf key only without revoked subkeys.
+    cmp "$s/hello.asc" "$K/r/pin-rotated.asc"
+    [ "$(colons "$K/r/pin-rotated.asc" | grep -c '^sub:r')" -eq 1 ]
+    refute grep -q '^sub:r' <<< "$(colons "$key")"
+    [ "$(colons "$key" | grep -c '^pub:')" -eq 1 ]
+    [ "$(colons "$key" | grep -c '^sub:')" -eq 1 ]
+    gpg --batch --with-colons --with-subkey-fingerprints --show-keys "$key" | grep -q "$(cat "$K/r/sub2")"
+    grep -qx "gpgkey=file://$TMP/site/rpm/RPM-GPG-KEY-hello" "$s/rpm/hello.repo"
+    # Every .rpm and repomd.xml.asc, against that file alone.
+    "$LIB/linux-signing.sh" --pin "$key" check-rpm "$s"/rpm/*/*.rpm
+    gpg --batch --dearmor < "$key" > "$TMP/key.gpg"
+    gpgv --keyring "$TMP/key.gpg" "$s/rpm/x86_64/repodata/repomd.xml.asc" "$s/rpm/x86_64/repodata/repomd.xml"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 0
+}
+
+@test "dnf key: an expired subkey is dropped" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    rot_keys
+    pkgs rpm
+    build_keyed "$K/x/pin.asc" "$K/x/ci.asc"
+    assert_status 0
+    key="$TMP/site/rpm/RPM-GPG-KEY-hello"
+    [ "$(colons "$K/x/pin.asc" | grep -c '^sub:e')" -eq 1 ]
+    refute grep -q '^sub:e' <<< "$(colons "$key")"
+    [ "$(colons "$key" | grep -c '^sub:')" -eq 1 ]
+    gpg --batch --with-colons --with-subkey-fingerprints --show-keys "$key" | grep -q "$(cat "$K/x/sub2")"
+}
+
+@test "dnf key: the same pin gives a byte-identical file, and an unsigned site has none" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    rot_keys
+    pkgs rpm
+    build_keyed "$K/r/pin-rotated.asc" "$K/r/ci2.asc"
+    assert_status 0
+    cp "$TMP/site/rpm/RPM-GPG-KEY-hello" "$TMP/key1"
+    rm -rf "$TMP/site"
+    build_keyed "$K/r/pin-rotated.asc" "$K/r/ci2.asc"
+    assert_status 0
+    cmp "$TMP/key1" "$TMP/site/rpm/RPM-GPG-KEY-hello"
+    rm -rf "$TMP/site"
+    unset GNUPGHOME REPO_SIGNING_KEY
+    build
+    assert_status 0
+    [ ! -e "$TMP/site/rpm/RPM-GPG-KEY-hello" ]
+    refute grep -q '^gpgkey=' "$TMP/site/rpm/hello.repo"
+}
+
+@test "dnf key: a tampered key file, the whole pin in its place, or another gpgkey line fails site-check" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    rot_keys
+    pkgs rpm
+    build_keyed "$K/r/pin-rotated.asc" "$K/r/ci2.asc"
+    assert_status 0
+    s="$TMP/site"
+    key="$s/rpm/RPM-GPG-KEY-hello"
+    cp "$key" "$TMP/key"
+    # The whole pin, revoked subkey and all: what rpm 4.16 can't import.
+    cp "$K/r/pin-rotated.asc" "$key"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 1
+    assert_output_contains "RPM-GPG-KEY-hello"
+    # Another key's file.
+    cp "$K/b/pin.asc" "$key"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 1
+    # A byte added, and the file gone.
+    cp "$TMP/key" "$key"
+    printf '\n' >> "$key"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 1
+    rm "$key"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 1
+    cp "$TMP/key" "$key"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 0
+    # The .repo pointing at the whole pin instead.
+    sed -i "s|^gpgkey=.*|gpgkey=file://$TMP/site/hello.asc|" "$s/rpm/hello.repo"
+    check --public-key "$K/r/pin-rotated.asc"
+    assert_status 1
+    assert_output_contains "gpgkey="
 }
 
 # --- Installing from the site (root, in a container) -----------------------------------------

@@ -43,7 +43,9 @@
 # Published architectures: those of the packages, plus the required ones. all/noarch packages
 # are listed in every one of them; with only all/noarch packages, amd64 arm64 / x86_64 aarch64.
 #   --public-key FILE       the pin. When it exists the site is laid out signed ([signed-by],
-#                           gpgcheck=1, <name>.asc), every .rpm must already verify against it, and
+#                           gpgcheck=1, <name>.asc, and with .rpm files rpm/RPM-GPG-KEY-<name>:
+#                           the pin without revoked or expired subkeys, which the .repo names
+#                           in gpgkey= because rpm 4.16 can't import a revoked subkey), every .rpm must already verify against it, and
 #                           the to-sign list names the files site-seal.sh signs. When it doesn't
 #                           exist the site is unsigned ([trusted=yes], gpgcheck=0).
 #   --directory-listings true|false  an index.html in every directory (default true)
@@ -438,9 +440,11 @@ if [ "$has_rpm" = true ]; then
         fi
     done
     if [ "$signed" = true ]; then
+        # dnf's key: the pin without its revoked and expired subkeys, which rpm 4.16 can import.
+        pin_rpm_key "$pin" "$out/rpm/RPM-GPG-KEY-$name"
         rpm_check="gpgcheck=1
 repo_gpgcheck=1
-gpgkey=$base_url/$name.asc"
+gpgkey=$base_url/rpm/RPM-GPG-KEY-$name"
     else
         rpm_check="gpgcheck=0
 repo_gpgcheck=0"

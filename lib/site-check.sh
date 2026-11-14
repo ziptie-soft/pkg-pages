@@ -14,8 +14,12 @@
 #   --deb-architectures "A B" the Debian architectures that must list VERSION (all is skipped)
 #   --public-key PIN          the pin. Given: the site must be signed; InRelease, Release.gpg,
 #                             every repomd.xml.asc and pkg-pages.tsv.asc are checked with
-#                             gpg_verify, and every .rpm with rpmkeys. Absent: the site must be
-#                             unsigned and no signature is checked.
+#                             gpg_verify, and every .rpm with rpmkeys. <name>.asc must be the pin,
+#                             byte for byte. rpm/RPM-GPG-KEY-<name> must be what pin_rpm_key
+#                             makes of it (no revoked or expired subkey), the .repo must name it
+#                             in gpgkey=, and every .rpm and repomd.xml.asc must verify against
+#                             that file alone. Absent: the site must be unsigned and no
+#                             signature is checked.
 #
 # Which parts exist is read from the site: deb/ when deb/<name>.list or deb/dists is there, rpm/
 # likewise, nix/ when it holds a flake file. When pkg-pages.tsv exists it is checked as well: its
@@ -137,6 +141,7 @@ fi
 if [ -n "$pin" ]; then
     require_tools gpg gpgv
     need "$name.asc"
+    cmp -s "$pin" "$site/$name.asc" || fail "$name.asc is not the public key $pin, byte for byte"
     verify() { gpg_verify "$pin" "$@"; }
     if [ "$has_deb" = true ]; then
         need "deb/dists/$suite/InRelease"
@@ -145,14 +150,33 @@ if [ -n "$pin" ]; then
     fi
     if [ "$has_rpm" = true ]; then
         grep -qx gpgcheck=1 "$site/rpm/$name.repo" || fail "gpgcheck=1 is missing from $name.repo"
+        # dnf's key: the pin without revoked or expired subkeys, byte for byte what a fresh
+        # pin_rpm_key makes, with one primary and a signing subkey.
+        rpm_key="$site/rpm/RPM-GPG-KEY-$name"
+        need "rpm/RPM-GPG-KEY-$name"
+        awk -v s="/rpm/RPM-GPG-KEY-$name" '/^gpgkey=/ && substr($0, length($0) - length(s) + 1) == s { f = 1 } END { exit !f }' "$site/rpm/$name.repo" ||
+            fail "$name.repo has no gpgkey= line for rpm/RPM-GPG-KEY-$name"
+        pin_rpm_key "$pin" "$work/rpm-key"
+        cmp -s "$work/rpm-key" "$rpm_key" || fail "rpm/RPM-GPG-KEY-$name is not the pin without its revoked and expired subkeys"
+        gpg --batch --with-colons --show-keys "$rpm_key" > "$work/rpm-key.colons" 2> /dev/null ||
+            fail "rpm/RPM-GPG-KEY-$name is not an OpenPGP certificate"
+        [ "$(grep -c '^pub:' "$work/rpm-key.colons")" -eq 1 ] || fail "rpm/RPM-GPG-KEY-$name must hold exactly one primary key"
+        if awk -F: '$1 == "sub" && $2 ~ /[re]/ { f = 1 } END { exit !f }' "$work/rpm-key.colons"; then
+            fail "rpm/RPM-GPG-KEY-$name holds a revoked or expired subkey"
+        fi
+        awk -F: '$1 == "sub" && index($12, "s") { f = 1 } END { exit !f }' "$work/rpm-key.colons" ||
+            fail "rpm/RPM-GPG-KEY-$name holds no signing subkey"
+        # Everything dnf checks verifies against that key alone.
         for d in "$site"/rpm/*/; do
             [ -d "$d" ] || continue
             need "${d#"$site"/}repodata/repomd.xml.asc"
             verify "${d}repodata/repomd.xml.asc" "${d}repodata/repomd.xml"
+            gpg_verify "$rpm_key" "${d}repodata/repomd.xml.asc" "${d}repodata/repomd.xml"
         done
         set -- "$site"/rpm/*/*.rpm
         [ -e "$1" ] || fail "rpm/ holds no .rpm file"
         check_rpm "$pin" "$@"
+        check_rpm "$rpm_key" "$@"
     fi
 fi
 

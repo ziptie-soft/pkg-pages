@@ -50,7 +50,9 @@ signed APT and DNF repositories on GitHub Pages. It should:
       Release, InRelease, Release.gpg
       main/binary-<arch>/Packages, Packages.gz
   rpm/
-    <name>.repo            baseurl=<base-url>/rpm/$basearch, gpgcheck=1, repo_gpgcheck=1, gpgkey=
+    <name>.repo            baseurl=<base-url>/rpm/$basearch, gpgcheck=1, repo_gpgcheck=1,
+                           gpgkey=<base-url>/rpm/RPM-GPG-KEY-<name>
+    RPM-GPG-KEY-<name>     the pin without revoked or expired subkeys, for dnf, when signed
     <arch>/                the .rpm files (noarch copied into each)
       repodata/repomd.xml, repomd.xml.asc, ...
   nix/                     optional hash-pinned flake for prebuilt release tarballs
@@ -66,6 +68,7 @@ file.
 | each `.rpm` (release page and DNF repo) | dnf `gpgcheck=1`, `rpm -K` |
 | `rpm/<arch>/repodata/repomd.xml` (`repomd.xml.asc`) | dnf `repo_gpgcheck=1` |
 | APT `InRelease` and `Release.gpg` | apt `signed-by=`; `InRelease` lists every `.deb`'s SHA-256 |
+| `rpm/RPM-GPG-KEY-<name>` (not signed itself) | the build: it must be the pin minus revoked and expired subkeys, and every `.rpm` and `repomd.xml.asc` must verify against it alone; dnf imports it through `gpgkey=`, since rpm 4.16 can't import a pin with a revoked subkey |
 | `pkg-pages.tsv` (`pkg-pages.tsv.asc`) | the next release, which takes the earlier releases from the site by these SHA-256 values |
 
 `pkg-pages.tsv` is tab-separated with LF line endings. The header is

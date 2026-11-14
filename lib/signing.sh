@@ -30,6 +30,27 @@ pin_subkeys() {
         awk -F: '$1 == "sub" { s = 1; next } $1 == "fpr" && s { print $10; s = 0 }'
 }
 
+# pin_rpm_key PIN OUT: write to OUT the key dnf imports: PIN's primary key with its self-signatures
+# and every subkey that is neither revoked nor expired, armored. rpm 4.16 (RHEL 9) can't import a
+# certificate that carries a revoked subkey, and would fail a fresh install with the whole pin.
+# The same pin gives the same bytes. Fails unless a usable signing subkey is left. Runs in a
+# private GNUPGHOME of its own.
+pin_rpm_key() {
+    require_tools gpg
+    _kfpr="$(pin_fpr "$1")"
+    _khome=''
+    make_tmpdir _khome
+    chmod 700 "$_khome"
+    gpg --homedir "$_khome" --batch --quiet --import "$1" 2> /dev/null ||
+        die "could not import public-key $1 to make the dnf key"
+    gpg --homedir "$_khome" --batch --armor --export-options export-minimal,export-clean \
+        --export-filter 'drop-subkey=revoked -t || expired -t' --export "$_kfpr" > "$2" 2> /dev/null ||
+        die "could not make the dnf key from public-key $1"
+    _kok="$(gpg --batch --with-colons --show-keys "$2" 2> /dev/null |
+        awk -F: '$1 == "sub" && index($12, "s") && $2 !~ /[re]/ { n++ } END { print n + 0 }')"
+    [ "$_kok" -ge 1 ] || die "public-key $1 has no signing subkey that is neither revoked nor expired"
+}
+
 # secret_fpr: print the primary fingerprint of the only secret key in GNUPGHOME, or nothing when
 # there is none. Fails when there is more than one.
 secret_fpr() {
