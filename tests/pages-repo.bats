@@ -615,6 +615,49 @@ apt_only() {
     [ "$(output_value signed)" = false ]
 }
 
+# --- site-check.sh ---------------------------------------------------------------------------
+
+# check [OPTION]...: site-check.sh on $TMP/site.
+check() {
+    run "$LIB/site-check.sh" --site "$TMP/site" --name hello --version 1.2.3 "$@"
+}
+
+@test "site-check passes on a built site and names what is missing" {
+    need_deb
+    pkgs deb
+    build
+    assert_status 0
+    check --deb-architectures "amd64 arm64"
+    assert_status 0
+    check --deb-architectures "amd64 armhf"
+    assert_status 1
+    assert_output_contains "armhf"
+    rm "$TMP/site/deb/dists/stable/main/binary-arm64/Packages.gz"
+    check
+    assert_status 1
+    assert_output_contains "Packages.gz is missing"
+}
+
+@test "site-check against the pin fails on a tampered InRelease or a missing signature" {
+    need_deb
+    need gpgv
+    pkgs deb
+    build_signed
+    assert_status 0
+    check --public-key "$K/a/pin.asc"
+    assert_status 0
+    check --public-key "$K/b/pin.asc"
+    assert_status 1
+    cp "$TMP/site/deb/dists/stable/InRelease" "$TMP/InRelease"
+    sed -i 's/^Origin: hello$/Origin: evil/' "$TMP/site/deb/dists/stable/InRelease"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    cp "$TMP/InRelease" "$TMP/site/deb/dists/stable/InRelease"
+    rm "$TMP/site/deb/dists/stable/Release.gpg"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+}
+
 # --- Installing from the site (root, in a container) -----------------------------------------
 
 @test "apt installs from the signed site with signed-by, and pins an older version" {

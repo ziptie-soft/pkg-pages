@@ -11,6 +11,7 @@ unchanged on a developer's machine and in the `images.env` containers, which is 
 | `run.sh` | Runs a command on the runner (`host`) or in a pinned container (`docker`), with an optional private `GNUPGHOME` |
 | `in-container.sh` | Entry point of those containers: installs the tools, runs the command, hands written files back to the runner user |
 | `pages-repo.sh` | Builds the APT and DNF site from a directory of packages, signs it, and checks the result |
+| `site-check.sh` | Checks a built site as a client sees it: the layout, every signature against the pin, and the manifest |
 | `nix-flake.sh` | Builds an optional deterministic flake tarball for prebuilt archives, pinned by SHA-256 |
 | `linux-signing.sh` | `import`, `sign-rpm` and `check-rpm` against the committed public key |
 | `build-keyring.sh` | Builds the `<name>-keyring` `.deb` that carries the pin, with a version taken from the pin's newest signature |
