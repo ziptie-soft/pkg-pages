@@ -6,14 +6,14 @@
 | File | Covers |
 |---|---|
 | `common.bats` | input checks, HTML escaping, temp directories, version matching, pool paths |
-| `signing.bats` | every row of the fail-closed matrix, rotation, revocation, expiry, signing and checking `.rpm` files |
+| `signing.bats` | every row of the fail-closed matrix, rotation, revocation, expiry, signing and checking `.rpm` files, `sign-history` |
 | `pages-repo.bats` | the site layout, metadata handling, signing, the landing page, `extra-site`, installing from the site with apt and dnf, tampering |
 | `nix-flake.bats` | archive validation, lock sanity, SHA-256 pins, and deterministic flake tarballs |
 | `build-keyring.bats` | the keyring `.deb`: version from the pin, reproducible build, the pin inside, the standby-subkey notice |
-| `fetch-history.bats` | release selection and downloads, against a fake `gh` |
+| `fetch-history.bats` | release selection and downloads against a fake `gh`; site mode against a fake `curl` and the real one, the signed manifest, and the history map |
 | `install-test.bats` | installs and smoke commands, signature checks before an `.rpm` install |
 | `package-rust.bats` | building the fixture crate with cargo-deb and cargo-generate-rpm |
-| `run.bats` | host and docker modes, against a fake engine: mounts, the tmpfs `GNUPGHOME`, secrets passed by name |
+| `run.bats` | host and docker modes, against a fake engine: the two phases, mounts, the tmpfs `GNUPGHOME`, secrets passed by name |
 | `action.bats` | `lib/action.sh` defaults and validation; every input of every `action.yml` reaching its script |
 | `ci-key.bats` | `tools/ci-key` |
 | `dev.bats` | the pin gate and the self-ref check |

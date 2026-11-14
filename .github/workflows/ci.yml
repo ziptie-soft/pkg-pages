@@ -274,6 +274,191 @@ jobs:
           grep -qF "pkg-pages</a> $(cat version.txt)</footer>" site/index.html
           ls site/rpm/x86_64/
 
+  # The staged site build as a caller composes it: the job that parses packages holds no key
+  # (build-keyring, build-site, check-site), and a separate step holds it (sign-rpm, seal-site). The
+  # key is a rotated one, as in production: the pin lists a revoked subkey 1 and the active subkey 2,
+  # which CI holds. The site is served from a file:/// URL and installed in each distribution with
+  # the commands of its own landing page. A throwaway key; it signs nothing real.
+  site:
+    name: Staged site build end to end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # checkout
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install rpmbuild
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq rpm
+
+      - name: Make test packages and a rotated test key
+        id: fixtures
+        run: |
+          set -euo pipefail
+          for v in 1.0.0 1.1.0; do
+            dir="dist-${v}"
+            tests/fixtures.sh deb "${dir}" pptest "${v}-1" amd64
+            tests/fixtures.sh rpm "${dir}" pptest "${v}" x86_64
+            tests/fixtures.sh deb "${dir}" pptest-data "${v}" all
+            tests/fixtures.sh rpm "${dir}" pptest-data "${v}" noarch
+          done
+          key="${RUNNER_TEMP}/key"
+          tests/fixtures.sh key "${key}" "pkg-pages site test"
+          fpr="$(cat "${key}/fpr")"
+          # Revoke subkey 1, add subkey 2: the pin lists both, and CI holds only subkey 2.
+          sleep 1
+          printf 'key 1\nrevkey\ny\n0\n\ny\nsave\n' |
+            gpg --homedir "${key}/home" --batch --pinentry-mode loopback --passphrase '' \
+              --command-fd 0 --status-fd 2 --edit-key "${fpr}" 2> /dev/null
+          gpg --homedir "${key}/home" --batch --quiet --pinentry-mode loopback --passphrase '' \
+            --quick-add-key "${fpr}" rsa2048 sign 3y 2> /dev/null
+          sub2="$(gpg --homedir "${key}/home" --batch --with-colons --with-subkey-fingerprints --list-keys |
+            awk -F: '$1 == "sub" && $2 != "r" { s = 1; next } $1 == "fpr" && s { print $10; exit }')"
+          test -n "${sub2}"
+          mkdir -p test-signing
+          gpg --homedir "${key}/home" --batch --armor --export "${fpr}" > test-signing/repo.asc
+          gpg --homedir "${key}/home" --batch --pinentry-mode loopback --passphrase '' \
+            --armor --export-secret-subkeys "${sub2}!" > "${key}/ci2.asc"
+          test "$(gpg --batch --with-colons --show-keys test-signing/repo.asc | grep -c '^sub:r')" -eq 1
+          {
+            echo 'key<<PKG_PAGES_EOF'
+            cat "${key}/ci2.asc"
+            echo 'PKG_PAGES_EOF'
+          } >> "${GITHUB_OUTPUT}"
+          echo "fpr=${fpr}" >> "${GITHUB_OUTPUT}"
+          gpgconf --homedir "${key}/home" --kill all
+          rm -rf "${key}"
+
+      - name: build-keyring
+        id: keyring
+        uses: ./build-keyring
+        with:
+          public-key: test-signing/repo.asc
+          name: pptest
+
+      - name: sign-rpm (1.0.0)
+        uses: ./sign-rpm
+        with:
+          packages: dist-1.0.0/*.rpm
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
+      - name: build-site (1.0.0)
+        id: build1
+        uses: ./build-site
+        with:
+          packages: dist-1.0.0
+          keyring: keyring
+          tag: v1.0.0
+          version: 1.0.0
+          name: pptest
+          description: pkg-pages CI <staged build>
+          base-url: file://${{ github.workspace }}/site1
+          deb-architectures: amd64
+          rpm-architectures: x86_64
+          public-key: test-signing/repo.asc
+          out: site1
+
+      - name: seal-site (1.0.0)
+        id: seal1
+        uses: ./seal-site
+        with:
+          site: site1
+          to-sign: ${{ steps.build1.outputs.to-sign }}
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
+      - name: check-site (1.0.0)
+        uses: ./check-site
+        with:
+          site: site1
+          name: pptest
+          version: 1.0.0
+          deb-architectures: amd64
+          public-key: test-signing/repo.asc
+          upload: 'false'
+
+      - name: Check the outputs and the site
+        env:
+          KEYRING_DEB: ${{ steps.keyring.outputs.deb }}
+          KEYRING_VERSION: ${{ steps.keyring.outputs.version }}
+          BUILD_SIGNED: ${{ steps.build1.outputs.signed }}
+          TO_SIGN: ${{ steps.build1.outputs.to-sign }}
+          SEAL_SIGNED: ${{ steps.seal1.outputs.signed }}
+          SEAL_FPR: ${{ steps.seal1.outputs.fingerprint }}
+          FPR: ${{ steps.fixtures.outputs.fpr }}
+        run: |
+          set -euo pipefail
+          test "${BUILD_SIGNED}" = true
+          test "${SEAL_SIGNED}" = true
+          test "${SEAL_FPR}" = "${FPR}"
+          test -s "${KEYRING_DEB}"
+          test "$(basename "${KEYRING_DEB}")" = "pptest-keyring_${KEYRING_VERSION}_all.deb"
+          # The to-sign list sits beside the site, not in it, and names every file to sign.
+          test -s "${TO_SIGN}"
+          test ! -e site1/site1.to-sign
+          grep -qx pkg-pages.tsv "${TO_SIGN}"
+          grep -qx deb/dists/stable/Release "${TO_SIGN}"
+          grep -qx rpm/x86_64/repodata/repomd.xml "${TO_SIGN}"
+          # Files written in the containers belong to the runner user.
+          test "$(stat -c %U site1/index.html)" = "$(id -un)"
+          test "$(stat -c %U site1/pkg-pages.tsv.asc)" = "$(id -un)"
+          test -s site1/pptest.asc
+          test -s site1/deb/dists/stable/InRelease
+          test -s site1/rpm/x86_64/repodata/repomd.xml.asc
+          # dnf's key leaves out the revoked subkey; the published pin keeps it.
+          test "$(gpg --batch --with-colons --show-keys site1/rpm/RPM-GPG-KEY-pptest | grep -c '^sub:r')" -eq 0
+          test "$(gpg --batch --with-colons --show-keys site1/pptest.asc | grep -c '^sub:r')" -eq 1
+          grep -qx 'gpgkey=file://'"${GITHUB_WORKSPACE}"'/site1/rpm/RPM-GPG-KEY-pptest' site1/rpm/pptest.repo
+          grep -q 'signed-by=/usr/share/keyrings/pptest-keyring.asc' site1/deb/pptest.list
+          # The manifest: this release's packages, then the keyring package.
+          test "$(head -n 1 site1/pkg-pages.tsv | cut -f1-3)" = "$(printf '#pkg-pages-manifest\t1\tpptest')"
+          grep -q "^release	v1.0.0	[0-9a-f]\{64\}	deb/pool/main/p/pptest/" site1/pkg-pages.tsv
+          test "$(tail -n 1 site1/pkg-pages.tsv | cut -f1)" = keyring
+          grep -q 'GPG' site1/pkg-pages.tsv.asc || grep -q 'BEGIN PGP SIGNATURE' site1/pkg-pages.tsv.asc
+
+      # What a user does, with the site's own files: the keyring first, then the packages. APT gets
+      # the key from the keyring package; dnf from the .repo's gpgkey= (the revoked subkey is not in
+      # it, which rpm 4.16 of AlmaLinux 9 needs), with gpgcheck=1 and repo_gpgcheck=1.
+      - name: Install from the site (Debian and Ubuntu, APT)
+        env:
+          SITE: ${{ github.workspace }}/site1
+        run: |
+          set -euo pipefail
+          for var in DEBIAN_IMAGE UBUNTU_IMAGE; do
+            image="$(sed -n "s/^${var}=//p" images.env)"
+            docker run --rm --security-opt label=disable -v "${SITE}:${SITE}:ro" -e SITE "${image}" sh -euc '
+              install -d /usr/share/keyrings
+              cp "${SITE}/pptest.asc" /usr/share/keyrings/pptest-keyring.asc
+              cp "${SITE}/deb/pptest.list" /etc/apt/sources.list.d/pptest.list
+              apt-get update -qq
+              apt-get install -y -qq pptest-keyring pptest pptest-data
+              test -f /usr/share/pptest/1.0.0-1
+              test -f /usr/share/pptest-data/1.0.0
+              cmp /usr/share/keyrings/pptest-keyring.asc "${SITE}/pptest.asc"
+              dpkg-query -W -f="\${Version}\n" pptest-keyring | grep -qE "^[0-9]{8}\.[0-9]{6}$"
+            '
+          done
+
+      - name: Install from the site (Fedora and AlmaLinux 9, DNF)
+        env:
+          SITE: ${{ github.workspace }}/site1
+        run: |
+          set -euo pipefail
+          for var in FEDORA_IMAGE ALMALINUX_IMAGE; do
+            image="$(sed -n "s/^${var}=//p" images.env)"
+            docker run --rm --security-opt label=disable -v "${SITE}:${SITE}:ro" -e SITE "${image}" sh -euc '
+              grep -qx gpgcheck=1 "${SITE}/rpm/pptest.repo"
+              grep -qx repo_gpgcheck=1 "${SITE}/rpm/pptest.repo"
+              cp "${SITE}/rpm/pptest.repo" /etc/yum.repos.d/pptest.repo
+              dnf install -y --repo pptest pptest pptest-data
+              test -f /usr/share/pptest/1.0.0
+              test -f /usr/share/pptest-data/1.0.0
+            '
+          done
+
   # package-rust on both architectures, then installing what it built.
   package-rust:
     name: package-rust (${{ matrix.runner }})

@@ -1,0 +1,193 @@
+# build-site: lay out the APT and DNF repositories site from a directory of .deb/.rpm files. Holds
+# no key and signs nothing: the .rpm files must already be signed (sign-rpm), and seal-site signs
+# the metadata files this action lists. Contract: docs/actions.md#build-site. The work is done by
+# lib/action.sh → lib/site-build.sh.
+name: pkg-pages build-site
+description: Build the APT and DNF repositories site from packages, without a signing key
+author: ziptie-soft
+
+inputs:
+  packages:
+    description: >-
+      Directory holding this release's .deb and .rpm files (searched recursively). With a pin,
+      every .rpm must already verify against it. Name, version and architecture are read from each
+      package's metadata, not from its file name.
+    required: true
+  history:
+    description: >-
+      Directory of earlier releases' packages (fetch-history's dir, after sign-rpm's history).
+      Needs history-map.
+    required: false
+    default: ''
+  history-map:
+    description: >-
+      The map fetch-history wrote (its map output, as sign-rpm updated it): the release tag of
+      each file in history, found by its SHA-256. Needs history.
+    required: false
+    default: ''
+  keyring:
+    description: >-
+      Directory holding exactly one <name>-keyring_<version>_all.deb (build-keyring's out). It is
+      published with the packages, the .list uses it as the APT key and the landing page installs
+      it first. Needs a pin.
+    required: false
+    default: ''
+  tag:
+    description: >-
+      This release's tag (letters, digits and . _ + / -). The site lists its packages in
+      pkg-pages.tsv, each under its release tag.
+    required: true
+  version:
+    description: The version this release publishes; the site fails to build unless it is among the packages.
+    required: true
+  name:
+    description: >-
+      Base name of the published files (<name>.asc, deb/<name>.list, rpm/<name>.repo) and of the
+      APT Origin/Label. Defaults to the repository name.
+    required: false
+    default: ''
+  title:
+    description: Landing page title, .repo name and APT Description, on one line. Defaults to "<name> package repositories".
+    required: false
+    default: ''
+  description:
+    description: One line about the project for the landing page (plain text, HTML-escaped).
+    required: false
+    default: ''
+  homepage:
+    description: Project URL linked from the landing page. Defaults to the repository URL.
+    required: false
+    default: ''
+  base-url:
+    description: >-
+      Where the site is served (https:// or file:///). Defaults to
+      https://<owner, lowercased>.github.io/<repo>. Letters, digits and . _ ~ : / % + @ = , - only:
+      the install commands use it unquoted.
+    required: false
+    default: ''
+  suite:
+    description: APT suite and codename.
+    required: false
+    default: stable
+  component:
+    description: APT component.
+    required: false
+    default: main
+  deb-architectures:
+    description: >-
+      Space-separated Debian architectures that must each have a package of `version`
+      (e.g. "amd64 arm64"). Empty: whatever the packages contain. Architecture: all packages are
+      listed in every architecture.
+    required: false
+    default: ''
+  rpm-architectures:
+    description: >-
+      Space-separated RPM architectures that must each have a package of `version`
+      (e.g. "x86_64 aarch64"). Empty: whatever the packages contain. noarch packages are copied
+      into every rpm/<arch>/.
+    required: false
+    default: ''
+  nix-archives:
+    description: Newline-separated SYSTEM=PATH prebuilt archives for the optional Nix flake.
+    required: false
+    default: ''
+  nix-binaries:
+    description: Space-separated paths of binaries in each Nix archive, such as bin/mytool.
+    required: false
+    default: ''
+  nix-url-base:
+    description: URL prefix for archive files referenced by the optional Nix flake.
+    required: false
+    default: ''
+  public-key:
+    description: >-
+      Path, in the caller's checkout, of the committed public key (the pin). File present: the
+      site is laid out signed, and seal-site must sign it. File absent: unsigned site.
+    required: false
+    default: packaging/signing/repo.asc
+  directory-listings:
+    description: Write an index.html into every directory (Pages serves no listings of its own).
+    required: false
+    default: 'true'
+  footer:
+    description: Add a small footer linking to pkg-pages to the landing page and directory listings.
+    required: false
+    default: 'true'
+  footer-version:
+    description: >-
+      The pkg-pages version the footer names; empty: this action's version.txt. publish.yml sets
+      it, as it runs the actions of the commit before the release commit.
+    required: false
+    default: ''
+  packslip-project:
+    description: >-
+      packslip project the landing page shows install commands for, e.g. github.com/OWNER/REPO;
+      empty: no packslip section.
+    required: false
+    default: ''
+  packslip-pin:
+    description: Optional ps1_ signer pin added to the packslip command.
+    required: false
+    default: ''
+  extra-site:
+    description: Optional directory merged into the site root (docs, badges); it may not overwrite repository files.
+    required: false
+    default: ''
+  out:
+    description: Site directory to create; must not exist. The to-sign list is written beside it, as <out>.to-sign.
+    required: false
+    default: site
+  runner-mode:
+    description: >-
+      docker (default): run the tools in the pinned Debian image of images.env, on a runner with
+      Docker. host: the job already runs in a container with apt-ftparchive, createrepo_c, gpg,
+      and rpmkeys installed.
+    required: false
+    default: docker
+
+outputs:
+  site-path:
+    description: The site directory.
+    value: ${{ steps.run.outputs.site-path }}
+  to-sign:
+    description: The file listing the site's metadata to sign (one path relative to the site per line), for seal-site. Empty for an unsigned site.
+    value: ${{ steps.run.outputs.to-sign }}
+  signed:
+    description: "'true' when the site is laid out signed (seal-site still has to sign it), 'false' when unsigned."
+    value: ${{ steps.run.outputs.signed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build the repositories
+      id: run
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_HISTORY: ${{ inputs.history }}
+        INPUT_HISTORY_MAP: ${{ inputs.history-map }}
+        INPUT_KEYRING: ${{ inputs.keyring }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_TITLE: ${{ inputs.title }}
+        INPUT_DESCRIPTION: ${{ inputs.description }}
+        INPUT_HOMEPAGE: ${{ inputs.homepage }}
+        INPUT_BASE_URL: ${{ inputs.base-url }}
+        INPUT_SUITE: ${{ inputs.suite }}
+        INPUT_COMPONENT: ${{ inputs.component }}
+        INPUT_DEB_ARCHITECTURES: ${{ inputs.deb-architectures }}
+        INPUT_RPM_ARCHITECTURES: ${{ inputs.rpm-architectures }}
+        INPUT_NIX_ARCHIVES: ${{ inputs.nix-archives }}
+        INPUT_NIX_BINARIES: ${{ inputs.nix-binaries }}
+        INPUT_NIX_URL_BASE: ${{ inputs.nix-url-base }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_DIRECTORY_LISTINGS: ${{ inputs.directory-listings }}
+        INPUT_FOOTER: ${{ inputs.footer }}
+        INPUT_FOOTER_VERSION: ${{ inputs.footer-version }}
+        INPUT_PACKSLIP_PROJECT: ${{ inputs.packslip-project }}
+        INPUT_PACKSLIP_PIN: ${{ inputs.packslip-pin }}
+        INPUT_EXTRA_SITE: ${{ inputs.extra-site }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" build-site'

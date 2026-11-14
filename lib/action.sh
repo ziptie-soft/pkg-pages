@@ -3,7 +3,8 @@
 # lib/ script, on the runner or in a pinned container (run.sh). Keeping this out of the action.yml
 # files makes it testable with bats and keeps `${{ inputs.* }}` out of every `run:` block.
 #
-# Usage:  action.sh build-repo | sign-rpm | check-rpm | fetch-history | install-test | package-rust
+# Usage:  action.sh build-repo | build-keyring | build-site | seal-site | check-site | sign-rpm |
+#                  check-rpm | fetch-history | install-test | package-rust
 #
 # Inputs arrive as environment variables set by the step's `env:`, one per input, named
 # INPUT_<NAME> with dashes as underscores (INPUT_PUBLIC_KEY for public-key). The secret is
@@ -78,6 +79,54 @@ with_files() {
     "$@"
 }
 
+# name_input: the name input, or the repository name, lowercased, with _ turned into -.
+name_input() {
+    _n="$(input NAME)"
+    if [ -z "$_n" ]; then
+        _repo="${GITHUB_REPOSITORY:-}"
+        [ -n "$_repo" ] || die "name is empty and GITHUB_REPOSITORY is not set"
+        _n="$(printf '%s' "${_repo#*/}" | tr '[:upper:]' '[:lower:]' | tr _ -)"
+    fi
+    printf '%s\n' "$_n"
+}
+
+# base_url_input: the base-url input, or https://<owner>.github.io/<repo> from the repository.
+base_url_input() {
+    _u="$(input BASE_URL)"
+    if [ -z "$_u" ]; then
+        _repo="${GITHUB_REPOSITORY:-}"
+        [ -n "$_repo" ] || die "base-url is empty and GITHUB_REPOSITORY is not set"
+        _owner="$(printf '%s' "${_repo%%/*}" | tr '[:upper:]' '[:lower:]')"
+        _rname="${_repo#*/}"
+        # A user or organisation site (<owner>.github.io) is served at the root.
+        if [ "$(printf '%s' "$_rname" | tr '[:upper:]' '[:lower:]')" = "$_owner.github.io" ]; then
+            _u="https://$_owner.github.io"
+        else
+            _u="https://$_owner.github.io/$_rname"
+        fi
+    fi
+    printf '%s\n' "$_u"
+}
+
+# homepage_input: the homepage input, or the repository URL (empty without a repository).
+homepage_input() {
+    _h="$(input HOMEPAGE)"
+    if [ -z "$_h" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+        _h="${GITHUB_SERVER_URL:-https://github.com}/$GITHUB_REPOSITORY"
+    fi
+    printf '%s\n' "$_h"
+}
+
+# site_tools ARCHIVES: the tools of the site build, ARCHIVES being the nix-archives input.
+site_tools() {
+    _t="gpg gpgv apt-ftparchive dpkg-deb createrepo_c rpm rpmkeys"
+    if [ -n "$1" ]; then
+        _t="$_t tar gzip"
+        case "$1" in *.tar.xz*) _t="$_t xz" ;; esac
+    fi
+    printf '%s\n' "$_t"
+}
+
 build_repo() {
     mode="$(runner_mode)"
     pin="$(public_key)"
@@ -89,29 +138,9 @@ build_repo() {
     version="$(input VERSION)"
     [ -n "$version" ] || die "version is empty"
 
-    # Defaults from the repository: owner/repo → name repo, https://owner.github.io/repo.
-    repo="${GITHUB_REPOSITORY:-}"
-    owner="$(printf '%s' "${repo%%/*}" | tr '[:upper:]' '[:lower:]')"
-    rname="${repo#*/}"
-    name="$(input NAME)"
-    if [ -z "$name" ]; then
-        [ -n "$repo" ] || die "name is empty and GITHUB_REPOSITORY is not set"
-        name="$(printf '%s' "$rname" | tr '[:upper:]' '[:lower:]' | tr _ -)"
-    fi
-    base_url="$(input BASE_URL)"
-    if [ -z "$base_url" ]; then
-        [ -n "$repo" ] || die "base-url is empty and GITHUB_REPOSITORY is not set"
-        # A user or organisation site (<owner>.github.io) is served at the root.
-        if [ "$(printf '%s' "$rname" | tr '[:upper:]' '[:lower:]')" = "$owner.github.io" ]; then
-            base_url="https://$owner.github.io"
-        else
-            base_url="https://$owner.github.io/$rname"
-        fi
-    fi
-    homepage="$(input HOMEPAGE)"
-    if [ -z "$homepage" ] && [ -n "$repo" ]; then
-        homepage="${GITHUB_SERVER_URL:-https://github.com}/$repo"
-    fi
+    name="$(name_input)"
+    base_url="$(base_url_input)"
+    homepage="$(homepage_input)"
     listings="$(input DIRECTORY_LISTINGS)"
     footer="$(input FOOTER)"
     check_bool upload "$(input_or UPLOAD true)"
@@ -121,12 +150,7 @@ build_repo() {
         nix_url_base="$(input NIX_URL_BASE)"
     validate_nix_inputs "$nix_archives" "$nix_binaries" "$nix_url_base"
 
-    nix_tools="gpg gpgv apt-ftparchive dpkg-deb createrepo_c rpm rpmsign rpmkeys"
-    if [ -n "$nix_archives" ]; then
-        nix_tools="$nix_tools tar gzip"
-        case "$nix_archives" in *.tar.xz*) nix_tools="$nix_tools xz" ;; esac
-    fi
-    "$lib/run.sh" "$mode" --image debian --tools "$nix_tools" \
+    "$lib/run.sh" "$mode" --image debian --tools "$(site_tools "$nix_archives") rpmsign" \
         --gnupg --env REPO_SIGNING_KEY --writes "$out" -- \
         "$lib/pages-repo.sh" --import-key true \
         --packages "$packages" --out "$out" --version "$version" --name "$name" \
@@ -160,6 +184,105 @@ validate_nix_inputs() {
     done <<EOF
 $_archives
 EOF
+}
+
+build_keyring() {
+    mode="$(runner_mode)"
+    pin="$(public_key)"
+    name="$(name_input)"
+    out="$(input_or OUT keyring)"
+    check_relpath out "$out"
+    "$lib/run.sh" "$mode" --image debian --tools "gpg dpkg-deb" --writes "$out" -- \
+        "$lib/build-keyring.sh" --pin "$pin" --name "$name" --out "$out"
+}
+
+# build_site: lib/site-build.sh. Holds no key and signs nothing, so the container that parses
+# the packages never sees one (seal_site signs, in another).
+build_site() {
+    mode="$(runner_mode)"
+    pin="$(public_key)"
+    packages="$(input PACKAGES)"
+    check_relpath packages "$packages"
+    history="$(input HISTORY)" history_map="$(input HISTORY_MAP)"
+    [ -z "$history$history_map" ] || {
+        [ -n "$history" ] && [ -n "$history_map" ] || die "history and history-map must be set together"
+        check_relpath history "$history"
+        check_relpath history-map "$history_map"
+    }
+    keyring="$(input KEYRING)"
+    [ -z "$keyring" ] || check_relpath keyring "$keyring"
+    tag="$(input TAG)"
+    [ -n "$tag" ] || die "tag is empty"
+    version="$(input VERSION)"
+    [ -n "$version" ] || die "version is empty"
+    out="$(input_or OUT site)"
+    check_relpath out "$out"
+    name="$(name_input)"
+    base_url="$(base_url_input)"
+    homepage="$(homepage_input)"
+    listings="$(input DIRECTORY_LISTINGS)"
+    footer="$(input FOOTER)"
+    extra="$(input EXTRA_SITE)"
+    [ -z "$extra" ] || check_relpath extra-site "$extra"
+    nix_archives="$(input NIX_ARCHIVES)" nix_binaries="$(input NIX_BINARIES)" \
+        nix_url_base="$(input NIX_URL_BASE)"
+    validate_nix_inputs "$nix_archives" "$nix_binaries" "$nix_url_base"
+
+    # The list of files to sign is written beside the site, outside it, so it is never published.
+    "$lib/run.sh" "$mode" --image debian --tools "$(site_tools "$nix_archives")" \
+        --writes "$out" --writes "$out.to-sign" -- \
+        "$lib/site-build.sh" \
+        --packages "$packages" --out "$out" --to-sign "$out.to-sign" \
+        --version "$version" --name "$name" --tag "$tag" \
+        --base-url "$base_url" --homepage "$homepage" \
+        --title "$(input TITLE)" --description "$(input DESCRIPTION)" \
+        --suite "$(input_or SUITE stable)" \
+        --component "$(input_or COMPONENT main)" \
+        --deb-architectures "$(input DEB_ARCHITECTURES)" \
+        --rpm-architectures "$(input RPM_ARCHITECTURES)" \
+        --nix-archives "$nix_archives" --nix-binaries "$nix_binaries" --nix-url-base "$nix_url_base" \
+        --public-key "$pin" \
+        --history "$history" --history-map "$history_map" --keyring "$keyring" \
+        --directory-listings "${listings:-true}" \
+        --footer "${footer:-true}" \
+        --footer-version "$(input FOOTER_VERSION)" \
+        --packslip-project "$(input PACKSLIP_PROJECT)" \
+        --packslip-pin "$(input PACKSLIP_PIN)" \
+        --extra-site "$extra"
+}
+
+# seal_site: lib/site-seal.sh, the one step of the site build that holds the key. It needs only
+# gpg and reads nothing but the to-sign list's text files.
+seal_site() {
+    mode="$(runner_mode)"
+    pin="$(public_key)"
+    site="$(input SITE)"
+    check_relpath site "$site"
+    to_sign="$(input TO_SIGN)"
+    check_relpath to-sign "$to_sign"
+    "$lib/run.sh" "$mode" --image debian --tools "gpg gpgv" \
+        --gnupg --env REPO_SIGNING_KEY --writes "$site" -- \
+        "$lib/site-seal.sh" --site "$site" --to-sign "$to_sign" --public-key "$pin" --import-key true
+}
+
+# check_site: lib/site-check.sh, then the Pages artifact (action.yml). Needs no secret.
+check_site() {
+    mode="$(runner_mode)"
+    pin="$(public_key)"
+    site="$(input SITE)"
+    check_relpath site "$site"
+    version="$(input VERSION)"
+    [ -n "$version" ] || die "version is empty"
+    name="$(name_input)"
+    check_bool upload "$(input_or UPLOAD true)"
+    # A pin that exists: the site must be signed by it. Without one the site must be unsigned.
+    set -- --site "$site" --name "$name" --version "$version" \
+        --suite "$(input_or SUITE stable)" \
+        --component "$(input_or COMPONENT main)" \
+        --deb-architectures "$(input DEB_ARCHITECTURES)"
+    [ ! -f "$pin" ] || set -- "$@" --public-key "$pin"
+    "$lib/run.sh" "$mode" --image debian --tools "gpg gpgv rpm rpmkeys tar gzip" --read-only -- \
+        "$lib/site-check.sh" "$@"
 }
 
 sign_rpm() {
@@ -224,9 +347,13 @@ package_rust() {
         --cargo-generate-rpm-version "$(input_or CARGO_GENERATE_RPM_VERSION 0.21.1)"
 }
 
-[ "$#" -eq 1 ] || die "usage: $0 build-repo | sign-rpm | check-rpm | fetch-history | install-test | package-rust"
+[ "$#" -eq 1 ] || die "usage: $0 build-repo | build-keyring | build-site | seal-site | check-site | sign-rpm | check-rpm | fetch-history | install-test | package-rust"
 case "$1" in
     build-repo) build_repo ;;
+    build-keyring) build_keyring ;;
+    build-site) build_site ;;
+    seal-site) seal_site ;;
+    check-site) check_site ;;
     sign-rpm) sign_rpm ;;
     check-rpm) check_rpm ;;
     fetch-history) fetch_history ;;

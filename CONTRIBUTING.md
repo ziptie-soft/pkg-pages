@@ -28,6 +28,8 @@ Run `mise run check` and `mise run test:containers` before you open a pull reque
 action.yml               build-repo, the root action (the only one the Marketplace lists)
 sign-rpm/ check-rpm/     composite actions; each action.yml only maps inputs to env and
 fetch-history/             calls lib/action.sh
+build-keyring/ build-site/
+seal-site/ check-site/
 install-test/
 package-rust/
 .github/workflows/

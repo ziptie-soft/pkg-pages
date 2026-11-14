@@ -69,6 +69,10 @@ runs cargo-deb and cargo-generate-rpm for you ([docs/building.md](docs/building.
 | Path | Kind | Does |
 |---|---|---|
 | [`action.yml`](action.yml) (`ziptie-soft/pkg-pages@…`) | composite | **build-repo**: build (and sign) the APT/DNF site from a directory of packages |
+| [`build-keyring/`](build-keyring/action.yml) | composite | Build the `<name>-keyring` `.deb` that carries the public key |
+| [`build-site/`](build-site/action.yml) | composite | Build the site without a key, so the job that parses packages never holds one |
+| [`seal-site/`](seal-site/action.yml) | composite | Sign the site's metadata with the CI subkey: the only step that holds the key |
+| [`check-site/`](check-site/action.yml) | composite | Check the built site as a client sees it, and upload it as the Pages artifact |
 | [`sign-rpm/`](sign-rpm/action.yml) | composite | Sign `.rpm` files with the CI subkey, checked against the pin |
 | [`check-rpm/`](check-rpm/action.yml) | composite | Verify `.rpm` signatures against the pin, as dnf does |
 | [`fetch-history/`](fetch-history/action.yml) | composite | Download earlier releases' packages from GitHub Releases |
