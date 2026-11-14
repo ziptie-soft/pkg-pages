@@ -5,8 +5,16 @@
 # REPO_SIGNING_KEY is taken out of the environment while the tools are installed, and given
 # back to COMMAND only.
 #
-# Usage (inside the container): in-container.sh COMMAND [ARG]...
+# --install-only (run.sh's first, throwaway container): install the missing tools, remove the
+# package caches, and stop there. It exits 10 when nothing was missing, so run.sh commits no image.
+#
+# Usage (inside the container): in-container.sh --install-only | COMMAND [ARG]...
 set -eu
+install_only=false
+if [ "${1:-}" = --install-only ]; then
+    install_only=true
+    shift
+fi
 
 lib="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
@@ -68,6 +76,16 @@ if [ -n "$pkgs" ]; then
             ;;
         dnf) dnf install -y -q $pkgs >&2 ;;
     esac
+fi
+
+if [ "$install_only" = true ]; then
+    [ -n "$pkgs" ] || exit 10
+    # The caches would only make the committed image bigger.
+    case "$manager" in
+        apt) apt-get clean >&2 && rm -rf /var/lib/apt/lists/* ;;
+        dnf) dnf clean all >&2 ;;
+    esac
+    exit 0
 fi
 
 if [ "$key_set" = true ]; then

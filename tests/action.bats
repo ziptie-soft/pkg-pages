@@ -12,7 +12,20 @@ setup() {
     unset GITHUB_ACTIONS REPO_SIGNING_KEY GNUPGHOME
     for v in $(env | sed -n 's/^\(INPUT_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
     mkdir -p "$TMP/bin" "$TMP/work"
-    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$FAKE_LOG/docker.args"\nenv > "$FAKE_LOG/docker.env"\n' > "$TMP/bin/docker"
+    # The fake engine has no tools image, and records phase 1 in install.args, finding nothing
+    # missing (exit 10). The command's run: one argument per line in docker.args, its environment
+    # in docker.env.
+    cat > "$TMP/bin/docker" << 'EOF'
+#!/bin/sh
+case "$1" in image) exit 1 ;; rm) exit 0 ;; esac
+for a in "$@"; do
+    [ "$a" = --install-only ] || continue
+    printf '%s\n' "$@" > "$FAKE_LOG/install.args"
+    exit 10
+done
+printf '%s\n' "$@" > "$FAKE_LOG/docker.args"
+env > "$FAKE_LOG/docker.env"
+EOF
     chmod +x "$TMP/bin/docker"
     export FAKE_LOG="$TMP" PATH="$TMP/bin:$PATH" DOCKER=docker
     export GITHUB_REPOSITORY=SkeLLLa/Star_Forge GITHUB_SERVER_URL=https://github.com
@@ -57,6 +70,7 @@ build_repo() {
     [ "$(arg_after --tmpfs)" = /pkg-pages-gnupg:rw,mode=0700 ]
     grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
     grep -qxF "$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+    [ "$(arg_after --network)" = none ]
 }
 
 @test "build-repo: a user site (<owner>.github.io) is served at the root" {
@@ -96,7 +110,8 @@ build_repo() {
     [ "$(arg_after --nix-archives)" = "x86_64-linux=archives.tar.gz" ]
     [ "$(arg_after --nix-binaries)" = bin/hello ]
     [ "$(arg_after --nix-url-base)" = https://example.test/releases ]
-    grep -Eq '^PKG_PAGES_TOOLS=.*tar gzip$' "$TMP/docker.args"
+    tools="$(sed -n 's/^PKG_PAGES_TOOLS=//p' "$TMP/install.args")"
+    case " $tools " in *" gzip "*" tar "*) ;; *) false ;; esac
     grep -qxF "$TMP/work:$TMP/work" "$TMP/docker.args"
     export INPUT_NIX_ARCHIVES="x86_64-linux=../outside.tar.gz"
     build_repo
@@ -155,6 +170,7 @@ dist/b/y.rpm" ]
     assert_status 0
     grep -qx dist/y.rpm "$TMP/docker.args"
     grep -qxF "$TMP/work:$TMP/work:ro" "$TMP/docker.args"
+    [ "$(arg_after --network)" = none ]
     export INPUT_PACKAGES='dist/x.rpm
 dist/none-*.rpm'
     run "$LIB/action.sh" check-rpm
@@ -192,12 +208,14 @@ dist/none-*.rpm'
     assert_status 1
 }
 
-@test "install-test: the distro image, and the smoke command by environment, not argv" {
+@test "install-test: the distro image, the network, and the smoke command by environment, not argv" {
     touch x.deb
     export INPUT_PACKAGES=x.deb INPUT_DISTRO=ubuntu INPUT_SMOKE='hello --version; echo ok'
     run "$LIB/action.sh" install-test
     assert_status 0
     grep -qxF "$(sed -n 's/^UBUNTU_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+    # It installs packages: the default network and capabilities, and a writable root.
+    refute grep -qxE -- '--network|--cap-drop|--read-only' "$TMP/docker.args"
     grep -qx PKG_PAGES_SMOKE "$TMP/docker.args"
     refute grep -q 'hello --version' "$TMP/docker.args"
     grep -q '^PKG_PAGES_SMOKE=hello --version; echo ok$' "$TMP/docker.env"

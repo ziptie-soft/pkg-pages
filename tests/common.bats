@@ -139,6 +139,25 @@ b=two" ]
     [ ! -e "$(cat "$TMP/path")" ]
 }
 
+@test "register_container removes the containers on exit, die and TERM, and keeps make_tmpdir's cleanup" {
+    # The fake engine records each call; the real one isn't needed.
+    printf '#!/bin/sh\necho "$*" >> "%s/engine.log"\n' "$TMP" > "$TMP/engine"
+    chmod +x "$TMP/engine"
+    for end in 'true' 'die x' 'kill -TERM $$'; do
+        : > "$TMP/engine.log"
+        run sh_lib "make_tmpdir d; echo \$d > '$TMP/path'; register_container '$TMP/engine' c1
+            register_container '$TMP/engine' c2; $end"
+        [ "$(cat "$TMP/engine.log")" = "rm -f c1
+rm -f c2" ]
+        [ ! -e "$(cat "$TMP/path")" ]
+    done
+    assert_status 143
+    # Nothing registered: the engine is never called.
+    : > "$TMP/engine.log"
+    run sh_lib "true"
+    [ ! -s "$TMP/engine.log" ]
+}
+
 @test "pkg_matches_version: Debian versions and revisions" {
     yes() { run sh_lib "pkg_matches_version deb '$1' '$2'"; assert_status 0; }
     no() { run sh_lib "pkg_matches_version deb '$1' '$2'"; assert_status 1; }
