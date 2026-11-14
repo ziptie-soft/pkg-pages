@@ -27,7 +27,7 @@ Sourced by the scripts above, never run:
 |---|---|
 | `common.sh` | `die`, `notice`, step outputs, input checks, `html_escape`, `make_tmpdir` (cleaned up on exit) |
 | `packages.sh` | `pkg_meta` (name, version and architecture from the package itself), version matching, the pool path |
-| `signing.sh` | the fail-closed import, `sign_rpm`, `check_rpm` |
+| `signing.sh` | the fail-closed import, `gpg_verify`, `sign_rpm`, `check_rpm`, `pin_rpm_key` (the pin without revoked or expired subkeys, for dnf) |
 
 ```text
 action.yml ─► action.sh ─► run.sh ─┬─ host:   COMMAND
