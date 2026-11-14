@@ -145,6 +145,235 @@ build_repo() {
     assert_status 1
 }
 
+# tools: the tools phase 1 of the docker run installed, sorted, space-separated.
+tools() {
+    sed -n 's/^PKG_PAGES_TOOLS=//p' "$TMP/install.args" | tr ' ' '\n' | sort | tr '\n' ' ' | sed 's/ $//'
+}
+
+@test "build-keyring: name from the repository, the pin, the Debian image, no key and no network" {
+    run "$LIB/action.sh" build-keyring
+    assert_status 0
+    [ "$(arg_after --pin)" = packaging/signing/repo.asc ]
+    [ "$(arg_after --name)" = star-forge ]
+    [ "$(arg_after --out)" = keyring ]
+    [ "$(writes)" = keyring ]
+    [ "$(tools)" = "dpkg-deb gpg" ]
+    grep -qxF "$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+    [ "$(arg_after --network)" = none ]
+    refute grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
+    refute grep -q pkg-pages-gnupg "$TMP/docker.args"
+}
+
+@test "build-keyring passes the caller's values and rejects unsafe ones" {
+    export INPUT_NAME=hello INPUT_OUT=pkgs/keyring INPUT_PUBLIC_KEY=keys/pin.asc
+    run "$LIB/action.sh" build-keyring
+    assert_status 0
+    [ "$(arg_after --name)" = hello ]
+    [ "$(arg_after --out)" = pkgs/keyring ]
+    [ "$(arg_after --pin)" = keys/pin.asc ]
+    export INPUT_OUT=../keyring
+    run "$LIB/action.sh" build-keyring
+    assert_status 1
+    export INPUT_OUT=keyring INPUT_PUBLIC_KEY=/etc/pin.asc
+    run "$LIB/action.sh" build-keyring
+    assert_status 1
+    export INPUT_PUBLIC_KEY=pin.asc INPUT_RUNNER_MODE=vm
+    run "$LIB/action.sh" build-keyring
+    assert_status 1
+    unset GITHUB_REPOSITORY INPUT_RUNNER_MODE
+    run "$LIB/action.sh" build-keyring
+    assert_status 0
+    unset INPUT_NAME
+    run "$LIB/action.sh" build-keyring
+    assert_status 1
+    assert_output_contains "name is empty"
+}
+
+build_site() {
+    mkdir -p pkgs
+    export INPUT_PACKAGES="${INPUT_PACKAGES-pkgs}" INPUT_VERSION="${INPUT_VERSION-1.2.3}" INPUT_TAG="${INPUT_TAG-v1.2.3}"
+    run "$LIB/action.sh" build-site
+}
+
+@test "build-site defaults: the repository's name and URLs, no key, the to-sign list beside the site" {
+    build_site
+    assert_status 0
+    [ "$(arg_after --name)" = star-forge ]
+    [ "$(arg_after --base-url)" = https://skellla.github.io/Star_Forge ]
+    [ "$(arg_after --homepage)" = https://github.com/SkeLLLa/Star_Forge ]
+    [ "$(arg_after --tag)" = v1.2.3 ]
+    [ "$(arg_after --out)" = site ]
+    [ "$(arg_after --to-sign)" = site.to-sign ]
+    [ "$(arg_after --suite)" = stable ]
+    [ "$(arg_after --component)" = main ]
+    [ "$(arg_after --public-key)" = packaging/signing/repo.asc ]
+    [ "$(arg_after --directory-listings)" = true ]
+    [ "$(arg_after --footer)" = true ]
+    [ "$(writes)" = "site
+site.to-sign" ]
+    # It parses the packages, so it holds no key: none in the arguments, none in the environment.
+    refute grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
+    refute grep -q pkg-pages-gnupg "$TMP/docker.args"
+    [ "$(arg_after --network)" = none ]
+    # The same tools as build-repo, except the one that signs.
+    [ "$(tools)" = "apt-ftparchive createrepo_c dpkg-deb gpg gpgv rpm rpmkeys" ]
+    grep -qxF "$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+}
+
+@test "build-site passes the history, the keyring and the caller's values through" {
+    mkdir -p hist kr
+    : > hist.map
+    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=hist.map INPUT_KEYRING=kr INPUT_NAME=hello \
+        INPUT_BASE_URL=https://pkgs.example.com INPUT_OUT=public INPUT_TITLE='T <x>' \
+        INPUT_DEB_ARCHITECTURES='amd64 arm64' INPUT_FOOTER=false INPUT_FOOTER_VERSION=1.2.3 \
+        INPUT_PACKSLIP_PROJECT=github.com/Owner/Repo INPUT_PUBLIC_KEY=keys/pin.asc
+    build_site
+    assert_status 0
+    [ "$(arg_after --history)" = hist ]
+    [ "$(arg_after --history-map)" = hist.map ]
+    [ "$(arg_after --keyring)" = kr ]
+    [ "$(arg_after --name)" = hello ]
+    [ "$(arg_after --base-url)" = https://pkgs.example.com ]
+    [ "$(arg_after --out)" = public ]
+    [ "$(arg_after --to-sign)" = public.to-sign ]
+    [ "$(arg_after --title)" = 'T <x>' ]
+    [ "$(arg_after --deb-architectures)" = 'amd64 arm64' ]
+    [ "$(arg_after --footer)" = false ]
+    [ "$(arg_after --footer-version)" = 1.2.3 ]
+    [ "$(arg_after --packslip-project)" = github.com/Owner/Repo ]
+    [ "$(arg_after --public-key)" = keys/pin.asc ]
+    [ "$(writes)" = "public
+public.to-sign" ]
+}
+
+@test "build-site needs a tag and a version, takes history and history-map together, and rejects unsafe paths" {
+    export INPUT_TAG=
+    build_site; assert_status 1; assert_output_contains "tag is empty"
+    export INPUT_TAG=v1.2.3 INPUT_VERSION=
+    run "$LIB/action.sh" build-site; assert_status 1; assert_output_contains "version is empty"
+    export INPUT_VERSION=1.2.3 INPUT_HISTORY=hist
+    run "$LIB/action.sh" build-site; assert_status 1; assert_output_contains "together"
+    export INPUT_HISTORY='' INPUT_HISTORY_MAP=hist.map
+    run "$LIB/action.sh" build-site; assert_status 1; assert_output_contains "together"
+    unset INPUT_HISTORY INPUT_HISTORY_MAP
+    for v in INPUT_PACKAGES INPUT_OUT INPUT_KEYRING INPUT_EXTRA_SITE INPUT_PUBLIC_KEY; do
+        export "$v=../x"
+        build_site; assert_status 1
+        export "$v=/etc/x"
+        build_site; assert_status 1
+        unset "$v"
+    done
+    export INPUT_HISTORY=../h INPUT_HISTORY_MAP=h.map
+    build_site; assert_status 1
+    export INPUT_HISTORY=h INPUT_HISTORY_MAP=../h.map
+    build_site; assert_status 1
+    unset INPUT_HISTORY INPUT_HISTORY_MAP
+    export INPUT_RUNNER_MODE=vm
+    build_site; assert_status 1
+}
+
+@test "build-site validates the Nix inputs as build-repo does" {
+    touch archives.tar.xz
+    export INPUT_NIX_ARCHIVES=x86_64-linux=archives.tar.xz INPUT_NIX_BINARIES=bin/hello \
+        INPUT_NIX_URL_BASE=https://example.test/releases
+    build_site
+    assert_status 0
+    case " $(tools) " in *" tar "*) ;; *) false ;; esac
+    case " $(tools) " in *" xz "*) ;; *) false ;; esac
+    export INPUT_NIX_URL_BASE=''
+    build_site
+    assert_status 1
+}
+
+@test "build-site in host mode runs site-build.sh directly" {
+    export INPUT_RUNNER_MODE=host
+    build_site
+    # site-build.sh fails on the empty directory (or a missing tool): it ran here, not in docker.
+    [ ! -e "$TMP/docker.args" ]
+    assert_status 1
+}
+
+@test "seal-site: the key by name in a tmpfs home, the pin, only gpg, and the site marked as written" {
+    mkdir site
+    : > site.to-sign
+    export INPUT_SITE=site INPUT_TO_SIGN=site.to-sign
+    run "$LIB/action.sh" seal-site
+    assert_status 0
+    [ "$(arg_after --site)" = site ]
+    [ "$(arg_after --to-sign)" = site.to-sign ]
+    [ "$(arg_after --public-key)" = packaging/signing/repo.asc ]
+    [ "$(arg_after --import-key)" = true ]
+    [ "$(arg_after --tmpfs)" = /pkg-pages-gnupg:rw,mode=0700 ]
+    grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
+    [ "$(writes)" = site ]
+    [ "$(tools)" = "gpg gpgv" ]
+    [ "$(arg_after --network)" = none ]
+    grep -qxF "$(sed -n 's/^DEBIAN_IMAGE=//p' "$ROOT/images.env")" "$TMP/docker.args"
+    # The key's value is never an argument.
+    export REPO_SIGNING_KEY='-----BEGIN SECRET-----'
+    run "$LIB/action.sh" seal-site
+    assert_status 0
+    refute grep -q 'BEGIN SECRET' "$TMP/docker.args"
+}
+
+@test "seal-site needs the site and the list, as checkout-relative paths" {
+    export INPUT_SITE=site
+    run "$LIB/action.sh" seal-site; assert_status 1
+    export INPUT_SITE='' INPUT_TO_SIGN=site.to-sign
+    run "$LIB/action.sh" seal-site; assert_status 1
+    export INPUT_SITE=../site
+    run "$LIB/action.sh" seal-site; assert_status 1
+    export INPUT_SITE=site INPUT_TO_SIGN=/tmp/site.to-sign
+    run "$LIB/action.sh" seal-site; assert_status 1
+    export INPUT_TO_SIGN=site.to-sign INPUT_RUNNER_MODE=vm
+    run "$LIB/action.sh" seal-site; assert_status 1
+}
+
+@test "check-site: no key, a read-only checkout, no network, --public-key only for a pin that exists" {
+    mkdir site
+    export INPUT_SITE=site INPUT_VERSION=1.2.3 INPUT_DEB_ARCHITECTURES='amd64 arm64'
+    run "$LIB/action.sh" check-site
+    assert_status 0
+    [ "$(arg_after --site)" = site ]
+    [ "$(arg_after --name)" = star-forge ]
+    [ "$(arg_after --version)" = 1.2.3 ]
+    [ "$(arg_after --suite)" = stable ]
+    [ "$(arg_after --component)" = main ]
+    [ "$(arg_after --deb-architectures)" = 'amd64 arm64' ]
+    refute grep -qx -- --public-key "$TMP/docker.args"
+    grep -qxF "$TMP/work:$TMP/work:ro" "$TMP/docker.args"
+    refute grep -qx REPO_SIGNING_KEY "$TMP/docker.args"
+    [ "$(arg_after --network)" = none ]
+    case " $(tools) " in *" gpgv "*) ;; *) false ;; esac
+    case " $(tools) " in *" rpmkeys "*) ;; *) false ;; esac
+    : > pin.asc
+    export INPUT_PUBLIC_KEY=pin.asc INPUT_NAME=hello INPUT_SUITE=trixie INPUT_COMPONENT=contrib
+    run "$LIB/action.sh" check-site
+    assert_status 0
+    [ "$(arg_after --public-key)" = pin.asc ]
+    [ "$(arg_after --name)" = hello ]
+    [ "$(arg_after --suite)" = trixie ]
+    [ "$(arg_after --component)" = contrib ]
+}
+
+@test "check-site validates its inputs" {
+    export INPUT_SITE=site INPUT_VERSION=1.2.3
+    run "$LIB/action.sh" check-site; assert_status 0
+    export INPUT_VERSION=
+    run "$LIB/action.sh" check-site; assert_status 1; assert_output_contains "version is empty"
+    export INPUT_VERSION=1.2.3 INPUT_UPLOAD=yes
+    run "$LIB/action.sh" check-site; assert_status 1
+    unset INPUT_UPLOAD
+    export INPUT_SITE=/tmp/site
+    run "$LIB/action.sh" check-site; assert_status 1
+    export INPUT_SITE=../site
+    run "$LIB/action.sh" check-site; assert_status 1
+    unset INPUT_SITE
+    run "$LIB/action.sh" check-site; assert_status 1
+    export INPUT_SITE=site INPUT_PUBLIC_KEY=../pin.asc
+    run "$LIB/action.sh" check-site; assert_status 1
+}
+
 @test "sign-rpm expands globs and marks every file as written" {
     mkdir -p dist/a dist/b
     touch dist/a/x.rpm dist/b/y.rpm 'dist/b/with space.rpm'
@@ -259,12 +488,17 @@ inputs() {
 @test "the secret inputs reach the scripts only as REPO_SIGNING_KEY and GH_TOKEN" {
     grep -qF 'REPO_SIGNING_KEY: ${{ inputs.signing-key }}' "$ROOT/action.yml"
     grep -qF 'REPO_SIGNING_KEY: ${{ inputs.signing-key }}' "$ROOT/sign-rpm/action.yml"
+    grep -qF 'REPO_SIGNING_KEY: ${{ inputs.signing-key }}' "$ROOT/seal-site/action.yml"
+    # Only the two actions that sign take the key.
+    for d in build-keyring build-site check-site check-rpm fetch-history install-test package-rust; do
+        refute grep -q 'signing-key' "$ROOT/$d/action.yml"
+    done
     grep -qF 'GH_TOKEN: ${{ inputs.token }}' "$ROOT/fetch-history/action.yml"
 }
 
 @test "every action.yml calls lib/action.sh with its own name" {
     grep -qF '"$GITHUB_ACTION_PATH/lib/action.sh" build-repo' "$ROOT/action.yml"
-    for d in sign-rpm check-rpm fetch-history install-test package-rust; do
+    for d in build-keyring build-site seal-site check-site sign-rpm check-rpm fetch-history install-test package-rust; do
         grep -qF "\"\$GITHUB_ACTION_PATH/../lib/action.sh\" $d" "$ROOT/$d/action.yml"
     done
 }

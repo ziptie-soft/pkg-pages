@@ -11,6 +11,7 @@ updates:
       - '/fetch-history'
       - '/install-test'
       - '/package-rust'
+      - '/check-site'
     schedule:
       interval: 'weekly'
     cooldown:

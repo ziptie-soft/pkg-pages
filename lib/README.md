@@ -8,16 +8,16 @@ unchanged on a developer's machine and in the `images.env` containers, which is 
 | Script | Does |
 |---|---|
 | `action.sh` | The run step of every action: reads `INPUT_*`, validates, fills in defaults, calls `run.sh` |
-| `run.sh` | Runs a command on the runner (`host`) or in a pinned container (`docker`), with an optional private `GNUPGHOME` |
+| `run.sh` | Runs a command on the runner (`host`) or in a pinned container (`docker`: tools installed in a throwaway container first, the command then offline), with an optional private `GNUPGHOME` |
 | `in-container.sh` | Entry point of those containers: installs the tools, runs the command, hands written files back to the runner user |
 | `pages-repo.sh` | Builds the APT and DNF site from a directory of packages in one process: signs the `.rpm` files, builds the optional keyring package, then runs the three stages below |
 | `site-build.sh` | Lays the site out and holds no key: the repositories, the landing page, `pkg-pages.tsv` and the list of files to sign |
 | `site-seal.sh` | Signs a site's metadata files from a to-sign list (`Release`, `repomd.xml`, `pkg-pages.tsv`), the only step that holds the key |
 | `site-check.sh` | Checks a built site as a client sees it: the layout, every signature against the pin, and the manifest |
 | `nix-flake.sh` | Builds an optional deterministic flake tarball for prebuilt archives, pinned by SHA-256 |
-| `linux-signing.sh` | `import`, `sign-rpm` and `check-rpm` against the committed public key |
+| `linux-signing.sh` | `import`, `sign-rpm`, `sign-history` (earlier releases follow the current subkey) and `check-rpm` against the committed public key |
 | `build-keyring.sh` | Builds the `<name>-keyring` `.deb` that carries the pin, with a version taken from the pin's newest signature |
-| `fetch-history.sh` | Downloads earlier releases' packages with `gh` |
+| `fetch-history.sh` | Downloads earlier releases' packages, with `gh` or from the live site, checked against its signed manifest; writes the history map |
 | `install-test.sh` | Installs packages in a clean distribution container and runs a smoke command |
 | `package-rust.sh` | Builds a crate's `.deb` and `.rpm` with cargo-deb and cargo-generate-rpm |
 

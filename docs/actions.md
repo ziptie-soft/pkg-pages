@@ -98,6 +98,97 @@ any signing mismatch, or when the self-check fails. On failure nothing is upload
     retention-days: '30'
 ```
 
+## build-keyring
+
+`uses: ziptie-soft/pkg-pages/build-keyring@<sha>` (`lib/build-keyring.sh`; Debian image).
+
+It builds `<name>-keyring_<version>_all.deb` in `out`: one file, which installs the pin as
+`/usr/share/keyrings/<name>-keyring.asc`. APT clients that install it get key rotations and
+revocations with `apt upgrade`. The version is `YYYYMMDD.HHMMSS` (UTC), taken from the newest
+signature in the pin, so a new subkey or a revocation gives a higher version, and the same pin
+gives a byte-identical package. A notice says when the pin lists fewer than two usable signing
+subkeys, because a rotation then has no standby to move to.
+
+There is no `.rpm`: rpm can't import a key from a package scriptlet, because the transaction
+holds the rpm database lock. DNF takes its key from `rpm/RPM-GPG-KEY-<name>` through `gpgkey=`
+([signing.md](signing.md)). It needs no secret. It fails when the pin is missing, holds secret key
+material or more than one key, or `name` is not `[a-z0-9][a-z0-9.+-]*`. Outputs: `deb`, `version`.
+
+## build-site
+
+`uses: ziptie-soft/pkg-pages/build-site@<sha>` (`lib/site-build.sh`; Debian image).
+
+It lays out the site of [design.md#published-layout](design.md#published-layout) like
+`build-repo`, but holds no key and signs nothing, so the job that parses untrusted packages never
+has one: `seal-site` signs, `check-site` checks. `packages` is this release's files, and
+`history` and `history-map` (from `fetch-history`) hold earlier releases'.
+
+1. The defaults, and the rules for the packages, the release, the architectures and `extra-site`,
+   are `build-repo`'s (steps 1 to 3 and 5 to 8 above, except that point 2 here replaces the
+   signing of step 6). `tag` is required.
+2. With a pin that exists, the site is laid out signed, and every `.rpm` must already verify
+   against the pin ([`sign-rpm`](#sign-rpm) first). Without one it is unsigned.
+3. `history` and `history-map` go together. Every file in `history` must be in the map; its
+   release tag is found by its SHA-256, and a file the map doesn't list is an error.
+4. `pkg-pages.tsv` lists every package file under its release tag: this release's, then the
+   history tags in map order, then the keyring package.
+5. `keyring` holds exactly one `<name>-keyring_<version>_all.deb` (`build-keyring`). It is
+   published with the packages, the `.list` uses it as `signed-by`, and the landing page installs
+   it first. A copy of the same version in `history` is kept instead of the fresh build. A caller
+   package named `<name>-keyring` is refused, `.deb` and `.rpm` alike. A pin is required.
+6. The files to sign are listed in `<out>.to-sign`, beside the site, and never published. It is
+   empty for an unsigned site.
+
+Outputs: `site-path`, `to-sign` (the list's path) and `signed` (whether the layout is signed; the
+signatures come from `seal-site`). It fails when `out` or the list exists, when the inputs are
+invalid, or when a tool is missing in host mode.
+
+## seal-site
+
+`uses: ziptie-soft/pkg-pages/seal-site@<sha>` (`lib/site-seal.sh`; Debian image, `gpg` only).
+
+It is the one step of a site build that holds the key. It imports the key, failing closed against
+`public-key` ([signing.md](signing.md#fail-closed-matrix)), and signs the files of the `to-sign`
+list: `deb/dists/<suite>/Release` (to `InRelease` and `Release.gpg`),
+`rpm/<arch>/repodata/repomd.xml` (to `repomd.xml.asc`) and `pkg-pages.tsv` (to
+`pkg-pages.tsv.asc`). Each signature is verified against the pin after it is made.
+
+It refuses the whole list, before the first signature, for a path of any other form, a symbolic
+link (the file or a directory above it), a file that isn't regular and a file over 16 MiB. It
+writes only the signature files. With no pin and no key it changes nothing, notices it and outputs
+`signed=false`; a pin without a key, or a key without a pin, is an error. Outputs: `signed`,
+`fingerprint`.
+
+## check-site
+
+`uses: ziptie-soft/pkg-pages/check-site@<sha>` (`lib/site-check.sh`; Debian image).
+
+It checks the site as a client will see it, and needs no secret: the required files exist, each
+`deb-architectures` index lists `version`, and `pkg-pages.tsv` agrees with the package files (the
+header, every listed path with its SHA-256, and every `.deb` and `.rpm` listed). With a pin that
+exists, the site must be signed: `<name>.asc` is the pin, byte for byte, and `InRelease`,
+`Release.gpg`, every `repomd.xml.asc` and `pkg-pages.tsv.asc` verify against it. With no pin, the
+site must be unsigned.
+
+With `upload: 'true'` (the default), it then runs `actions/upload-pages-artifact` on `site` and
+outputs `artifact-id`. It fails on the first problem it finds; nothing is uploaded then.
+
+```yaml
+- uses: ziptie-soft/pkg-pages/build-site@<sha> # vX.Y.Z
+  id: build
+  with: { packages: dist, tag: v1.2.3, version: 1.2.3 }
+- uses: ziptie-soft/pkg-pages/seal-site@<sha> # vX.Y.Z
+  with:
+    site: site
+    to-sign: ${{ steps.build.outputs.to-sign }}
+    signing-key: ${{ secrets.REPO_SIGNING_KEY }}
+- uses: ziptie-soft/pkg-pages/check-site@<sha> # vX.Y.Z
+  with: { site: site, version: 1.2.3 }
+```
+
+In a real workflow `seal-site` runs in a job with the key and the others in jobs without one; the
+site passes between them as an artifact.
+
 ## sign-rpm
 
 `uses: ziptie-soft/pkg-pages/sign-rpm@<sha>` (`lib/linux-signing.sh sign-rpm`; Fedora image).

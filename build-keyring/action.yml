@@ -1,0 +1,45 @@
+# build-keyring: build the <name>-keyring .deb that carries the committed public key, so APT clients
+# get key rotations and revocations with `apt upgrade`. Needs no secret. Contract:
+# docs/actions.md#build-keyring.
+name: pkg-pages build-keyring
+description: Build the <name>-keyring .deb from a committed public key
+author: ziptie-soft
+
+inputs:
+  public-key:
+    description: Path of the committed public key (the pin), in the caller's checkout. The file must exist.
+    required: false
+    default: packaging/signing/repo.asc
+  name:
+    description: Base name of the site; the package is <name>-keyring. Defaults to the repository name.
+    required: false
+    default: ''
+  out:
+    description: Directory to write the .deb into (created; it holds only that file).
+    required: false
+    default: keyring
+  runner-mode:
+    description: docker (pinned Debian image of images.env) or host (gpg and dpkg-deb already installed).
+    required: false
+    default: docker
+
+outputs:
+  deb:
+    description: Path of the built .deb.
+    value: ${{ steps.run.outputs.deb }}
+  version:
+    description: The package version, YYYYMMDD.HHMMSS, taken from the pin's newest signature.
+    value: ${{ steps.run.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build the keyring package
+      id: run
+      shell: bash
+      env:
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_RUNNER_MODE: ${{ inputs.runner-mode }}
+      run: '"$GITHUB_ACTION_PATH/../lib/action.sh" build-keyring'
