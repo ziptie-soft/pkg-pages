@@ -124,6 +124,8 @@ signed_inputs() {
     build_repo
     assert_status 0
     [ "$(stages)" = "site-build site-check" ]
+    # keyring-package is on by default, and an unsigned site has no key to publish.
+    assert_output_contains "keyring-package is true but the site is unsigned"
     [ "$(carg 1 --packages)" = pkgs ]
     [ "$(carg 1 --name)" = star-forge ]
     [ "$(carg 1 --base-url)" = https://skellla.github.io/Star_Forge ]
@@ -162,9 +164,10 @@ site.to-sign" ]
 
 @test "build-repo, signed: build-keyring, sign-rpm, sign-history, build-site, seal-site, check-site, each its own call" {
     signed_inputs
-    export INPUT_KEYRING_PACKAGE=true INPUT_RESIGN_HISTORY=true
+    export INPUT_RESIGN_HISTORY=true
     build_repo
     assert_status 0
+    # keyring-package is not set: the default builds the keyring.
     [ "$(stages)" = "build-keyring sign-rpm sign-history site-build site-seal site-check" ]
     # The key reaches the two signing stages and the seal, and none of the three that parse packages.
     for n in 2 3 5; do has_key "$n"; done
@@ -214,9 +217,18 @@ reset_calls() {
     rm -f "$TMP"/call.* "$TMP"/install.* "$TMP/installs" "$TMP/calls" "$TMP/docker.args" "$TMP/docker.env"
 }
 
+@test "build-repo, signed: keyring-package false opts out of the keyring, and with it of the stage" {
+    signed_inputs
+    export INPUT_KEYRING_PACKAGE=false
+    build_repo
+    assert_status 0
+    [ "$(stages)" = "sign-rpm sign-history site-build site-seal site-check" ]
+    [ -z "$(carg 3 --keyring)" ]
+    refute grep -q 'keyring' <<< "$output"
+}
+
 @test "build-repo, signed: a stage with nothing to do is left out" {
     signed_inputs
-    export INPUT_KEYRING_PACKAGE=true
     # Only .deb files: nothing for rpmsign, in this release or the history.
     rm pkgs/b.rpm hist/old.rpm
     build_repo
@@ -249,11 +261,11 @@ reset_calls() {
     [ "$(carg 3 --history)" = site.work/history ]
 }
 
-@test "build-repo, unsigned: no signing stage, the caller's directories as they are, and a notice for keyring-package" {
+@test "build-repo, unsigned: no signing stage, the caller's directories as they are, and a notice about the keyring" {
     mkdir -p pkgs hist
     touch pkgs/a.deb pkgs/b.rpm hist/old.rpm
     : > hist.map
-    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=hist.map INPUT_KEYRING_PACKAGE=true INPUT_RESIGN_HISTORY=true
+    export INPUT_HISTORY=hist INPUT_HISTORY_MAP=hist.map INPUT_RESIGN_HISTORY=true
     build_repo
     assert_status 0
     [ "$(stages)" = "site-build site-check" ]
@@ -546,16 +558,22 @@ spy() {
     refute grep -q REPO_SIGNING_KEY "$TMP/spy.env"
 }
 
-@test "build-repo end to end, signed: the keyring package is published when asked for" {
+@test "build-repo end to end, signed: the keyring package is published by default, and keyring-package false leaves it out" {
     real_inputs
     with_secret
     write_map site
-    export INPUT_KEYRING_PACKAGE=true
     run "$LIB/action.sh" build-repo
     assert_status 0
     ls site/deb/pool/main/h/hello-keyring/hello-keyring_*_all.deb
     grep -q 'signed-by=/usr/share/keyrings/hello-keyring.asc' site/deb/hello.list
     grep -qP '^keyring\t-\t[0-9a-f]{64}\tdeb/pool/main/h/hello-keyring/' site/pkg-pages.tsv
+    rm -rf site
+    export INPUT_KEYRING_PACKAGE=false
+    run "$LIB/action.sh" build-repo
+    assert_status 0
+    [ ! -e site/deb/pool/main/h/hello-keyring ]
+    refute grep -q 'hello-keyring' site/deb/hello.list
+    refute grep -q '^keyring' site/pkg-pages.tsv
 }
 
 @test "build-repo end to end: an earlier .rpm that nothing proves needs resign-history" {

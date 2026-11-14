@@ -108,11 +108,11 @@ The numbered points below describe the result.
 - **`history`** and **`history-map`** (`fetch-history`'s `dir` and `map`; set both or neither) hold
   earlier releases. `packages` is this release's files only. Each history file is listed under the
   tag the map gives it, found by its SHA-256, and an `.rpm` that is signed again keeps its tag.
-- **`keyring-package: 'true'`** also publishes `<name>-keyring_<version>_all.deb`, the same
-  package `build-keyring` builds. The `.list` then names it as the APT key
-  (`signed-by=/usr/share/keyrings/<name>-keyring.asc`) and the landing page installs it first. It
-  builds a `.deb` only, and only for a signed site with `.deb` files (otherwise a notice). A
-  package of the caller's named `<name>-keyring` is refused. It is off by default.
+- **`keyring-package`** (default `'true'`; `'false'` opts out) also publishes
+  `<name>-keyring_<version>_all.deb`, the same package `build-keyring` builds. The `.list` then
+  names it as the APT key (`signed-by=/usr/share/keyrings/<name>-keyring.asc`) and the landing page
+  installs it first. It builds a `.deb` only, and only for a signed site with `.deb` files
+  (otherwise a notice). A package of the caller's named `<name>-keyring` is refused.
 
 The optional Nix inputs are `nix-archives` (newline-separated `SYSTEM=PATH` entries relative to
 the checkout), `nix-binaries` (space-separated paths inside each archive), and `nix-url-base`
