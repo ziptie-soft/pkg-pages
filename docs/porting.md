@@ -29,7 +29,7 @@ star-forge's `pages-repo.sh` was the most complete builder.
 | `repo` job, "Verify the repositories" | the self-check at the end of `pages-repo.sh` | Generic paths; signatures are verified against the pin with `gpgv` |
 | `verify-linux` job | `install-test/`, `check-rpm/` | The smoke test is the caller's `smoke` |
 | `linux-assets` job (cargo-deb, cargo-generate-rpm) | `package-rust/` | Version check from package metadata |
-| `sign-linux`, `verify-linux`, `repo`, `pages` jobs | `publish.yml` | Packages picked out of the artifacts; artifacts passed by ID |
+| `sign-linux`, `verify-linux`, `repo`, `pages` jobs | `publish.yml` | Packages picked out of the artifacts; artifacts passed by ID; v2 splits it into eight jobs ([upgrading.md](upgrading.md)) |
 | plasma-drop `newer-release` check | `publish.yml` `skip-if-newer` | `sort -V` on the published tags |
 | `check-action-pins.sh`, `images.env` | `dev/check-action-pins.sh`, `images.env` | Plus the check that every image is listed in `images.env` |
 

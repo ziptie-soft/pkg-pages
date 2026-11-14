@@ -1,11 +1,17 @@
-# The turnkey path: sign → install test → fetch history → build repo → deploy to GitHub Pages,
-# as one reusable workflow. Contract: docs/actions.md#publish-reusable-workflow; the jobs are
-# described in docs/design.md#jobs-of-the-reusable-workflow.
+# The turnkey path, as one reusable workflow: prepare → history → sign → install test → build →
+# seal → check → deploy to GitHub Pages. The key exists only in sign and seal, and the job that
+# parses the packages (build) has none. Contract: docs/actions.md#publish-reusable-workflow; the
+# jobs are described in docs/design.md#jobs-of-the-reusable-workflow.
+#
+#   prepare ─► history ─► sign ─► verify ─┐
+#      └───────────────────────────────────┴─► build ─► seal ─► check ─► deploy
 #
 # It calls this repository's own actions as ziptie-soft/pkg-pages/<action>@<sha>, never
 # ./<action>, which would resolve in the caller's checkout (dev/check-self-refs.sh). The lines
 # marked `# vX.Y.Z pkg-pages self-pin` are rewritten by dev/self-pin.sh at each release
-# (docs/releasing.md#the-self-pin); edit them only through it.
+# (docs/releasing.md#the-self-pin); edit them only through it. Every input of those actions that
+# the v2 defaults changed is passed explicitly, so this workflow behaves the same against the
+# actions it is pinned to now and against the ones of the release that follows.
 name: Publish packages
 
 on:
@@ -16,7 +22,7 @@ on:
         required: true
         type: string
       tag:
-        description: The release tag; skipped by fetch-history, compared by skip-if-newer.
+        description: The release tag; listed in the manifest, skipped by fetch-history, compared by skip-if-newer.
         required: true
         type: string
       ref:
@@ -120,8 +126,9 @@ on:
       signing-environment:
         description: >-
           GitHub environment of the caller's repository holding the signing secret, used by the
-          sign and repo jobs only. Restrict it to the default branch. Empty: those jobs run
-          without an environment (unsigned projects, or a key kept elsewhere).
+          sign and seal jobs only (an environment with required reviewers asks twice). Restrict it
+          to the default branch. Empty: those jobs run without an environment (unsigned projects,
+          or a key kept elsewhere).
         required: false
         type: string
         default: linux-signing
@@ -130,19 +137,43 @@ on:
         required: false
         type: number
         default: 9
+      history-from:
+        description: >-
+          Where earlier releases' packages come from: the live site, checked against its signed
+          pkg-pages.tsv (site), or the assets of the GitHub releases (releases). A site built
+          before v2 has no manifest: run one release with releases (docs/upgrading.md).
+        required: false
+        type: string
+        default: site
+      history-url:
+        description: >-
+          With history-from site, where the live site is served; empty: base-url, or the Pages URL
+          of this repository.
+        required: false
+        type: string
+        default: ''
       history-patterns:
+        description: Asset globs of the earlier releases' packages (history-from releases only).
         required: false
         type: string
         default: |
           *.deb
           *.rpm
-      resign-history:
+      keyring-package:
         description: >-
-          Re-sign earlier releases' .rpm files that don't verify against public-key, with a
-          warning for each (true), or fail on them (false).
+          Publish a <name>-keyring .deb that carries the public key, and point deb/<name>.list at
+          it (signed sites only; false opts out).
         required: false
         type: boolean
         default: true
+      resign-history:
+        description: >-
+          A one-run bootstrap tool: sign again an earlier release's .rpm that came from a GitHub
+          release and doesn't verify against public-key, with a warning (true), or fail on it
+          (false). Files proven by the site's manifest never need it.
+        required: false
+        type: boolean
+        default: false
       install-tests:
         description: >-
           JSON list of {"distro": "fedora|debian|ubuntu|<image@digest>", "arch":
@@ -179,7 +210,7 @@ on:
         default: ''
       artifact-prefix:
         description: >-
-          Prefix of the names of the artifacts this workflow uploads (<prefix>-deb, -rpm, -site,
+          Prefix of the names of the artifacts this workflow uploads (<prefix>-deb, -rpm, -keyring, -site,
           -pages-<attempt>). Change it when one run calls publish.yml more than once.
         required: false
         type: string
@@ -198,10 +229,10 @@ on:
     outputs:
       signed:
         description: "'true' when packages and repositories were signed."
-        value: ${{ jobs.repo.outputs.signed }}
+        value: ${{ jobs.seal.outputs.signed }}
       fingerprint:
         description: Primary key fingerprint of the pin, when signed.
-        value: ${{ jobs.repo.outputs.fingerprint }}
+        value: ${{ jobs.seal.outputs.fingerprint }}
       signed-rpm-artifact-id:
         description: >-
           Artifact ID of the .rpm files after signing (unsigned when the project doesn't sign);
@@ -209,10 +240,13 @@ on:
         value: ${{ jobs.sign.outputs.rpm-id }}
       deb-artifact-id:
         description: Artifact ID of the .deb files that were published.
-        value: ${{ jobs.sign.outputs.deb-id }}
+        value: ${{ jobs.prepare.outputs.deb-id }}
+      keyring-artifact-id:
+        description: Artifact ID of the <name>-keyring .deb; empty when the site is unsigned or keyring-package is false.
+        value: ${{ jobs.prepare.outputs.keyring-id }}
       site-artifact-id:
         description: Artifact ID of the Pages site (an upload-pages-artifact tarball).
-        value: ${{ jobs.repo.outputs.site-id }}
+        value: ${{ jobs.check.outputs.site-id }}
       page-url:
         description: URL of the deployed site; empty when not deployed.
         value: ${{ jobs.deploy.outputs.page-url }}
@@ -220,28 +254,32 @@ on:
 permissions: {}
 
 jobs:
-  # Collects this run's packages (only .deb and .rpm files; artifacts may hold tarballs too),
-  # signs the .rpm files, and re-uploads both sets as one artifact each, passed on by ID. Holds
-  # the key, so it only runs pkg-pages' own scripts: nothing of the caller's is executed.
-  sign:
-    name: Sign the packages
+  # Checks the inputs, takes the committed public key, collects this run's packages (only .deb and
+  # .rpm files; artifacts may hold tarballs too) and builds the keyring package. No secret exists
+  # in this job. Everything it hands on is uploaded once, and the later jobs download it by ID.
+  prepare:
+    name: Collect the packages
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    environment: ${{ inputs.signing-environment }}
     permissions:
       contents: read # checkout, for the public key
     outputs:
+      pin-id: ${{ steps.keep-pin.outputs.artifact-id }}
       deb-id: ${{ steps.deb.outputs.artifact-id }}
       rpm-id: ${{ steps.rpm.outputs.artifact-id }}
+      keyring-id: ${{ steps.keyring-upload.outputs.artifact-id }}
+      nix-id: ${{ steps.nix.outputs.artifact-id }}
       has-deb: ${{ steps.collect.outputs.has-deb }}
       has-rpm: ${{ steps.collect.outputs.has-rpm }}
-      pin-id: ${{ steps.keep-pin.outputs.artifact-id }}
+      has-keyring: ${{ steps.keyring.outputs.deb != '' }}
     steps:
-      # Before the sparse checkout uses it: a newline or a glob would add checkout patterns.
-      - name: Check the public-key input
+      # Before the sparse checkout uses public-key: a newline or a glob would add checkout patterns.
+      - name: Check the inputs
         shell: bash
         env:
           PUBLIC_KEY: ${{ inputs.public-key }}
+          TAG: ${{ inputs.tag }}
+          HISTORY_FROM: ${{ inputs.history-from }}
         run: |
           set -euo pipefail
           case "${PUBLIC_KEY}" in
@@ -255,6 +293,19 @@ jobs:
               ;;
             '' | /* | .. | ../* | */.. | */../*)
               echo "::error::public-key must be a relative path without '..', not '${PUBLIC_KEY}'"
+              exit 1
+              ;;
+          esac
+          case "${TAG}" in
+            '' | *[!A-Za-z0-9._+/-]*)
+              echo "::error::tag may contain only letters, digits and . _ + / -, not '${TAG}'"
+              exit 1
+              ;;
+          esac
+          case "${HISTORY_FROM}" in
+            site | releases) ;;
+            *)
+              echo "::error::history-from must be 'site' or 'releases', not '${HISTORY_FROM}'"
               exit 1
               ;;
           esac
@@ -340,13 +391,23 @@ jobs:
           echo "has-rpm=$([ "${n_rpm}" -gt 0 ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
           ls -l pkg-pages/deb pkg-pages/rpm
 
-      - name: Sign the .rpm files
-        if: ${{ steps.collect.outputs.has-rpm == 'true' }}
-        uses: ziptie-soft/pkg-pages/sign-rpm@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+      # The <name>-keyring .deb carries the pin, so APT clients get rotations and revocations with
+      # `apt upgrade`. No .rpm: dnf takes its key from rpm/RPM-GPG-KEY-<name> (docs/signing.md).
+      - name: Build the keyring package
+        id: keyring
+        if: ${{ inputs.keyring-package && steps.pin.outputs.present == 'true' }}
+        uses: ziptie-soft/pkg-pages/build-keyring@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
-          packages: pkg-pages/rpm/*.rpm
           public-key: ${{ inputs.public-key }}
-          signing-key: ${{ secrets.signing-key }}
+          name: ${{ inputs.name }}
+          out: pkg-pages/keyring
+          runner-mode: docker
+
+      - name: Note the unsigned project
+        if: ${{ inputs.keyring-package && steps.pin.outputs.present != 'true' }}
+        shell: bash
+        run: |
+          echo "::notice::keyring-package is true, but public-key does not exist, so the packages are unsigned and there is no keyring package"
 
       - name: Keep the .deb files
         id: deb
@@ -359,9 +420,161 @@ jobs:
           overwrite: true
           retention-days: ${{ inputs.retention-days }}
 
-      - name: Keep the .rpm files
+      # Unsigned: the sign job signs these and uploads them again as <prefix>-rpm.
+      - name: Keep the unsigned .rpm files
         id: rpm
         if: ${{ steps.collect.outputs.has-rpm == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-rpm-unsigned
+          path: pkg-pages/rpm/*.rpm
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+      - name: Keep the keyring package
+        id: keyring-upload
+        if: ${{ steps.keyring.outputs.deb != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-keyring
+          path: pkg-pages/keyring/*.deb
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+      # The Nix archives are only hashed and listed later; they are never extracted or run.
+      - name: Fetch the Nix archives
+        if: ${{ inputs.nix-artifacts != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: ${{ inputs.nix-artifacts }}
+          merge-multiple: true
+          path: pkg-pages/nix
+
+      - name: Keep the Nix archives
+        id: nix
+        if: ${{ inputs.nix-artifacts != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-nix
+          path: pkg-pages/nix
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+  # Fetches earlier releases' packages, from the live site (checked against its signed manifest,
+  # on the runner) or from the GitHub releases. No secret exists in this job and it runs none of
+  # the caller's code. The files and the history map (which stays outside the files' directory)
+  # are uploaded once, as <prefix>-history.
+  history:
+    name: Fetch earlier releases
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # the list of releases, and their assets
+    outputs:
+      history-id: ${{ steps.keep.outputs.artifact-id }}
+      has-history: ${{ steps.check.outputs.has-history }}
+    steps:
+      - name: Fetch the public key
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
+          path: pkg-pages/public-key
+
+      - name: Fetch earlier releases' packages
+        id: fetch
+        uses: ziptie-soft/pkg-pages/fetch-history@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        with:
+          dir: pkg-pages/history
+          from: ${{ inputs.history-from }}
+          url: ${{ inputs.history-url || inputs.base-url }}
+          public-key: pkg-pages/public-key/repo.asc
+          name: ${{ inputs.name }}
+          map: pkg-pages/history.map
+          keep: ${{ inputs.keep-releases }}
+          patterns: ${{ inputs.history-patterns }}
+          exclude-tag: ${{ inputs.tag }}
+
+      # Nothing is fetched with keep-releases 0, or for a project's first release.
+      - name: Check what was fetched
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(find pkg-pages/history -type f -print -quit)" ]; then
+            echo "has-history=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "has-history=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Keep the earlier releases
+        id: keep
+        if: ${{ steps.check.outputs.has-history == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-history
+          path: |
+            pkg-pages/history
+            pkg-pages/history.map
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+  # Signs this run's .rpm files, and earlier releases' .rpm files that the current subkey didn't
+  # sign (only when their bytes are proven: docs/signing.md). The key is here and in seal, nowhere
+  # else. It runs only pkg-pages' own scripts, on bytes that no other step has parsed. No checkout.
+  sign:
+    name: Sign the packages
+    needs: [prepare, history]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: ${{ inputs.signing-environment }}
+    permissions: {}
+    outputs:
+      rpm-id: ${{ steps.rpm.outputs.artifact-id }}
+      history-id: ${{ steps.resigned.outputs.artifact-id }}
+    steps:
+      - name: Fetch the public key
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
+          path: pkg-pages/public-key
+
+      - name: Fetch the .rpm files
+        if: ${{ needs.prepare.outputs.has-rpm == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.rpm-id }}
+          path: pkg-pages/rpm
+
+      # Gives pkg-pages/history (the files) and pkg-pages/history.map.
+      - name: Fetch earlier releases
+        if: ${{ needs.history.outputs.has-history == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.history.outputs.history-id }}
+          path: pkg-pages
+
+      - name: Sign the .rpm files
+        if: ${{ needs.prepare.outputs.has-rpm == 'true' || needs.history.outputs.has-history == 'true' }}
+        uses: ziptie-soft/pkg-pages/sign-rpm@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        with:
+          packages: ${{ needs.prepare.outputs.has-rpm == 'true' && 'pkg-pages/rpm/*.rpm' || '' }}
+          history: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history' || '' }}
+          history-map: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history.map' || '' }}
+          resign-history: ${{ inputs.resign-history }}
+          public-key: pkg-pages/public-key/repo.asc
+          signing-key: ${{ secrets.signing-key }}
+          runner-mode: docker
+
+      - name: Keep the .rpm files
+        id: rpm
+        if: ${{ needs.prepare.outputs.has-rpm == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}-rpm
@@ -370,11 +583,27 @@ jobs:
           overwrite: true
           retention-days: ${{ inputs.retention-days }}
 
+      # Only the .rpm files can have changed, and the map holds their new SHA-256 values. The
+      # build job lays them over the fetched history.
+      - name: Keep the earlier releases' .rpm files and the map
+        id: resigned
+        if: ${{ needs.history.outputs.has-history == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-history-resigned
+          path: |
+            pkg-pages/history/**/*.rpm
+            pkg-pages/history.map
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
   # Installs the packages about to be published on clean systems, as users would, and runs the
-  # caller's smoke command. No secret exists in this job.
+  # caller's smoke command. No secret exists in this job. A .deb test also installs the keyring
+  # package.
   verify:
     name: Install test (${{ matrix.distro }}, ${{ matrix.arch }})
-    needs: sign
+    needs: [prepare, sign]
     if: ${{ inputs.install-tests != '[]' && inputs.install-tests != '' }}
     runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
@@ -389,8 +618,8 @@ jobs:
       - name: Check the test
         shell: bash
         env:
-          HAS_DEB: ${{ needs.sign.outputs.has-deb }}
-          HAS_RPM: ${{ needs.sign.outputs.has-rpm }}
+          HAS_DEB: ${{ needs.prepare.outputs.has-deb }}
+          HAS_RPM: ${{ needs.prepare.outputs.has-rpm }}
         run: |
           set -euo pipefail
           case "${KIND}" in
@@ -399,18 +628,25 @@ jobs:
             *) echo "::error::install-tests: kind must be deb or rpm, not '${KIND}'"; exit 1 ;;
           esac
 
-      # The public key the sign job checked out; absent for an unsigned project.
+      # The public key the prepare job checked out; absent for an unsigned project.
       - name: Fetch the public key
-        if: ${{ needs.sign.outputs.pin-id != '' }}
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.sign.outputs.pin-id }}
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
           path: pkg-pages/public-key
 
       - name: Fetch the packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ env.KIND == 'rpm' && needs.sign.outputs.rpm-id || needs.sign.outputs.deb-id }}
+          artifact-ids: ${{ env.KIND == 'rpm' && needs.sign.outputs.rpm-id || needs.prepare.outputs.deb-id }}
+          path: pkg-pages/test
+
+      - name: Fetch the keyring package
+        if: ${{ env.KIND == 'deb' && needs.prepare.outputs.has-keyring == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.keyring-id }}
           path: pkg-pages/test
 
       - name: Install and smoke-test
@@ -421,43 +657,64 @@ jobs:
           public-key: pkg-pages/public-key/repo.asc
           smoke: ${{ inputs.smoke }}
 
-  # Builds the site from this run's packages and the earlier releases', signed with the key.
-  repo:
+  # Lays the site out from every package, and holds neither the key nor a secret: it parses the
+  # packages, which are untrusted bytes. The files to sign are uploaded on their own (<prefix>-to-sign)
+  # so that the key-holding seal job never downloads a package.
+  build:
     name: Build the APT and DNF repositories
-    needs: [sign, verify]
+    needs: [prepare, history, sign, verify]
     # verify is skipped when install-tests is [].
-    if: ${{ !cancelled() && needs.sign.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.history.result == 'success' && needs.sign.result == 'success' && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    environment: ${{ inputs.signing-environment }}
-    permissions:
-      contents: read # the earlier releases' assets (fetch-history)
+    permissions: {}
     outputs:
-      signed: ${{ steps.build.outputs.signed }}
-      fingerprint: ${{ steps.build.outputs.fingerprint }}
-      site-id: ${{ steps.build.outputs.artifact-id }}
+      site-id: ${{ steps.keep-site.outputs.artifact-id }}
+      to-sign-id: ${{ steps.keep-to-sign.outputs.artifact-id }}
     steps:
-      # The public key the sign job checked out; absent for an unsigned project.
       - name: Fetch the public key
-        if: ${{ needs.sign.outputs.pin-id != '' }}
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.sign.outputs.pin-id }}
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
           path: pkg-pages/public-key
 
       - name: Fetch the .deb files
-        if: ${{ needs.sign.outputs.has-deb == 'true' }}
+        if: ${{ needs.prepare.outputs.has-deb == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.sign.outputs.deb-id }}
+          artifact-ids: ${{ needs.prepare.outputs.deb-id }}
           path: pkg-pages/packages/deb
 
       - name: Fetch the signed .rpm files
-        if: ${{ needs.sign.outputs.has-rpm == 'true' }}
+        if: ${{ needs.prepare.outputs.has-rpm == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.sign.outputs.rpm-id }}
           path: pkg-pages/packages/rpm
+
+      - name: Fetch the keyring package
+        if: ${{ needs.prepare.outputs.has-keyring == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.keyring-id }}
+          path: pkg-pages/keyring
+
+      # The fetched history (pkg-pages/history and pkg-pages/history.map), then the .rpm files that
+      # the sign job signed again and the map it rewrote, laid over it.
+      - name: Fetch earlier releases
+        if: ${{ needs.history.outputs.has-history == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.history.outputs.history-id }}
+          path: pkg-pages
+
+      - name: Fetch earlier releases' signed .rpm files
+        if: ${{ needs.history.outputs.has-history == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.sign.outputs.history-id }}
+          path: pkg-pages
 
       - name: Prepare Nix archive inputs
         id: nix
@@ -494,32 +751,23 @@ jobs:
             printf '%s\nurl-base=%s\n' "${delimiter}" "${NIX_URL_BASE}"
           } >> "${GITHUB_OUTPUT}"
 
-      # Archives are only hashed and listed in this key-holding job; they are never extracted or run.
+      # Archives are only hashed and listed; they are never extracted or run.
       - name: Fetch the Nix archives
         if: ${{ inputs.nix-artifacts != '' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: ${{ inputs.nix-artifacts }}
-          merge-multiple: true
+          artifact-ids: ${{ needs.prepare.outputs.nix-id }}
           path: pkg-pages/nix
-
-      - name: Fetch earlier releases' packages
-        id: history
-        uses: ziptie-soft/pkg-pages/fetch-history@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
-        with:
-          dir: pkg-pages/packages/history
-          map: pkg-pages/history.map
-          keep: ${{ inputs.keep-releases }}
-          patterns: ${{ inputs.history-patterns }}
-          exclude-tag: ${{ inputs.tag }}
 
       - name: Build the repositories
         id: build
-        uses: ziptie-soft/pkg-pages@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        uses: ziptie-soft/pkg-pages/build-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
         with:
           packages: pkg-pages/packages
+          history: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history' || '' }}
+          history-map: ${{ needs.history.outputs.has-history == 'true' && 'pkg-pages/history.map' || '' }}
+          keyring: ${{ needs.prepare.outputs.has-keyring == 'true' && 'pkg-pages/keyring' || '' }}
           tag: ${{ inputs.tag }}
-          history-map: ${{ steps.history.outputs.map }}
           version: ${{ inputs.version }}
           name: ${{ inputs.name }}
           title: ${{ inputs.title }}
@@ -538,11 +786,169 @@ jobs:
           nix-binaries: ${{ inputs.nix-binaries }}
           nix-url-base: ${{ steps.nix.outputs.url-base }}
           public-key: pkg-pages/public-key/repo.asc
-          resign-history: ${{ inputs.resign-history }}
-          signing-key: ${{ secrets.signing-key }}
+          directory-listings: 'true'
           out: pkg-pages/site
+          runner-mode: docker
+
+      # .nojekyll and other dot files are part of the site.
+      - name: Keep the unsigned site
+        id: keep-site
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-site-unsealed
+          path: pkg-pages/site
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+      # The seal job gets the list and those text files, and nothing else of the site. seal-site
+      # checks the list again and refuses any other path, a link and a file over 16 MiB.
+      - name: Pick the files to sign
+        shell: bash
+        env:
+          SITE: pkg-pages/site
+          TO_SIGN: ${{ steps.build.outputs.to-sign }}
+        run: |
+          set -euo pipefail
+          mkdir -p pkg-pages/seal/site
+          cp -- "${TO_SIGN}" pkg-pages/seal/to-sign.txt
+          root="$(realpath -- "${SITE}")"
+          while IFS= read -r rel || [ -n "${rel}" ]; do
+            [ -n "${rel}" ] || continue
+            case "${rel}" in
+              pkg-pages.tsv | deb/dists/*/Release | rpm/*/repodata/repomd.xml) ;;
+              *) echo "::error::to-sign lists '${rel}', which is not a file to sign"; exit 1 ;;
+            esac
+            # The same file, with no link on the way and no . or .. segment.
+            if [ ! -f "${SITE}/${rel}" ] || [ "$(realpath -- "${SITE}/${rel}")" != "${root}/${rel}" ]; then
+              echo "::error::to-sign lists '${rel}', which is not a regular file of the site"
+              exit 1
+            fi
+            mkdir -p "pkg-pages/seal/site/$(dirname -- "${rel}")"
+            cp -- "${SITE}/${rel}" "pkg-pages/seal/site/${rel}"
+          done < "${TO_SIGN}"
+
+      - name: Keep the files to sign
+        id: keep-to-sign
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-to-sign
+          path: pkg-pages/seal
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+  # Signs the repository metadata: Release, repomd.xml and the manifest, text files only. The
+  # other place the key is. It always runs: with no pin and no key it notices and signs nothing,
+  # and a pin without a key (or a key without a pin) fails here, so a signed project never goes
+  # out unsigned.
+  seal:
+    name: Sign the repository metadata
+    needs: [prepare, build]
+    # Explicit: the default success() also looks at verify, which build allows to be skipped.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ${{ inputs.signing-environment }}
+    permissions: {}
+    outputs:
+      signed: ${{ steps.seal.outputs.signed }}
+      fingerprint: ${{ steps.seal.outputs.fingerprint }}
+      signatures-id: ${{ steps.keep.outputs.artifact-id }}
+    steps:
+      - name: Fetch the public key
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
+          path: pkg-pages/public-key
+
+      # pkg-pages/seal/to-sign.txt and the text files it lists, under pkg-pages/seal/site.
+      - name: Fetch the files to sign
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.to-sign-id }}
+          path: pkg-pages/seal
+
+      # An unsigned site has an empty list, and an artifact holds no empty directory.
+      - name: Make the site directory
+        shell: bash
+        run: mkdir -p pkg-pages/seal/site
+
+      - name: Sign the metadata
+        id: seal
+        uses: ziptie-soft/pkg-pages/seal-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        with:
+          site: pkg-pages/seal/site
+          to-sign: pkg-pages/seal/to-sign.txt
+          public-key: pkg-pages/public-key/repo.asc
+          signing-key: ${{ secrets.signing-key }}
+          runner-mode: docker
+
+      # Only the signature files: the paths are relative to the site root.
+      - name: Keep the signatures
+        id: keep
+        if: ${{ steps.seal.outputs.signed == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}-signatures
+          path: |
+            pkg-pages/seal/site/**/InRelease
+            pkg-pages/seal/site/**/Release.gpg
+            pkg-pages/seal/site/**/*.asc
+          if-no-files-found: error
+          overwrite: true
+          retention-days: ${{ inputs.retention-days }}
+
+  # Puts the signatures on the site and checks the result the way a client will see it, against
+  # the committed pin. No secret exists in this job. It uploads the site as <prefix>-site.
+  check:
+    name: Check the repositories
+    needs: [prepare, build, seal]
+    # Explicit, as for seal: a skipped verify must not skip the site.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.build.result == 'success' && needs.seal.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions: {}
+    outputs:
+      site-id: ${{ steps.check.outputs.artifact-id }}
+    steps:
+      - name: Fetch the public key
+        if: ${{ needs.prepare.outputs.pin-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.pin-id }}
+          path: pkg-pages/public-key
+
+      - name: Fetch the site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.build.outputs.site-id }}
+          path: pkg-pages/site
+
+      - name: Fetch the signatures
+        if: ${{ needs.seal.outputs.signed == 'true' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.seal.outputs.signatures-id }}
+          path: pkg-pages/site
+
+      - name: Check the repositories
+        id: check
+        uses: ziptie-soft/pkg-pages/check-site@a97594f318af5dfe13a0fe86a7dfb87673327b36 # v1.2.0 pkg-pages self-pin
+        with:
+          site: pkg-pages/site
+          public-key: pkg-pages/public-key/repo.asc
+          name: ${{ inputs.name }}
+          version: ${{ inputs.version }}
+          suite: ${{ inputs.suite }}
+          component: ${{ inputs.component }}
+          deb-architectures: ${{ inputs.deb-architectures }}
+          upload: 'true'
           artifact-name: ${{ inputs.artifact-prefix }}-site
           retention-days: ${{ inputs.retention-days }}
+          runner-mode: docker
 
   # The only job with pages: write and id-token: write. Skips the deploy on a re-run of an older
   # release, so the repositories never go back. A reusable workflow always lists its jobs, and
@@ -550,8 +956,9 @@ jobs:
   # deploy: false (the caller deploys the site) it reads as intended, not as a failure.
   deploy:
     name: Deploy to GitHub Pages (if deploy is true)
-    needs: repo
-    if: ${{ inputs.deploy && needs.repo.result == 'success' }}
+    needs: check
+    # !cancelled() instead of the implied success(), which would also look at a skipped verify.
+    if: ${{ !cancelled() && inputs.deploy && needs.check.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     concurrency:
@@ -594,7 +1001,7 @@ jobs:
         if: ${{ steps.newest.outputs.deploy == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          artifact-ids: ${{ needs.repo.outputs.site-id }}
+          artifact-ids: ${{ needs.check.outputs.site-id }}
           path: ${{ runner.temp }}/site-artifact
 
       - name: Fetch the extra artifacts

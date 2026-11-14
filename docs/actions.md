@@ -372,37 +372,59 @@ versions against the crate. See [building.md](building.md). Its output paths are
 
 ## publish (reusable workflow)
 
-`uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<sha>`: every step above, as four jobs
-([design.md#jobs-of-the-reusable-workflow](design.md#jobs-of-the-reusable-workflow)).
+`uses: ziptie-soft/pkg-pages/.github/workflows/publish.yml@<sha>`: every step above, as eight jobs
+([design.md#jobs-of-the-reusable-workflow](design.md#jobs-of-the-reusable-workflow)). The key
+exists in `sign` and `seal` only, and the job that parses the packages (`build`) has none.
 
-1. **sign** (in `signing-environment`): downloads the artifacts matching `deb-artifacts` and
-   `rpm-artifacts` and keeps only their `.deb` and `.rpm` files, so build artifacts may also hold
-   tarballs or checksums. It signs the `.rpm` files and uploads both sets again, as
-   `<artifact-prefix>-deb` and `-rpm`, with the public key (`-public-key`). It is the only job
-   that checks out the caller's repository, and only that one file.
-2. **verify** (a matrix from `install-tests`): `install-test` on each distribution, with `smoke`.
+1. **prepare**: checks the inputs and checks out only `public-key`. It keeps the `.deb`, `.rpm` and
+   Nix files of `deb-artifacts`, `rpm-artifacts` and `nix-artifacts` (build artifacts may also hold
+   tarballs or checksums) and builds the keyring package (`build-keyring`; signed sites only, unless
+   `keyring-package` is false). It uploads them as `<artifact-prefix>-deb`, `-rpm-unsigned`,
+   `-keyring`, `-nix` and `-public-key`.
+2. **history**: `fetch-history` with `from: history-from`, `keep-releases`, `history-patterns` and
+   `exclude-tag: tag`. `history-from: site` (the default) takes earlier releases from the live site
+   (`history-url`, else `base-url`, else this repository's Pages URL) and checks them against its
+   signed `pkg-pages.tsv`; `releases` takes the assets of the GitHub releases. It uploads
+   `<artifact-prefix>-history` (the files and their map), unless nothing was fetched.
+3. **sign** (in `signing-environment`): signs this release's `.rpm` files, and every earlier
+   release's `.rpm` that the current subkey didn't sign, when its bytes are proven by the manifest
+   or verify against the pin. An unproven one fails unless `resign-history` is true. It uploads
+   `<artifact-prefix>-rpm` and `-history-resigned`. It checks out nothing.
+4. **verify** (a matrix from `install-tests`): `install-test` on each distribution, with `smoke`.
    `kind` defaults to `rpm` for `fedora` and `deb` otherwise, and `arch: aarch64` runs on
-   `ubuntu-24.04-arm`. Each test installs only the packages for its own architecture. This job
-   runs the caller's `smoke` command, so it holds no secret and checks out nothing.
-   `install-tests: '[]'` skips the job.
-3. **repo** (in `signing-environment`): `fetch-history` (`keep-releases`, `history-patterns`,
-   skipping `tag`), then `build-repo`, which uploads `<artifact-prefix>-site`. The `footer` input
+   `ubuntu-24.04-arm`. A `.deb` test also installs the keyring package. Each test installs only
+   the packages for its own architecture. This job runs the caller's `smoke` command, so it holds
+   no secret and checks out nothing. `install-tests: '[]'` skips the job.
+5. **build**: `build-site` over every package, the history (with the re-signed `.rpm` files laid
+   over it) and the keyring package. It has no key. It uploads `<artifact-prefix>-site-unsealed`
+   and `-to-sign`: the list of metadata files to sign and those text files only. The `footer` input
    controls the small pkg-pages footer (default true). `packslip` opts in to the install card for
    `github.com/<caller repository>`; `packslip-pin` optionally pins its signer. Optional
-   `nix-artifacts` downloads this run's prebuilt archives; `nix-archives` maps systems to file
-   names, `nix-binaries` names the binaries within them, and `nix-url-base` overrides the default
-   release download URL. `resign-history` passes on to build-repo.
-4. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
+   `nix-artifacts` are this run's prebuilt archives; `nix-archives` maps systems to file names,
+   `nix-binaries` names the binaries within them, and `nix-url-base` overrides the default release
+   download URL.
+6. **seal** (in `signing-environment`): `seal-site` signs `Release`, `repomd.xml` and
+   `pkg-pages.tsv`, and uploads `<artifact-prefix>-signatures`. It always runs: with no pin and no
+   key it signs nothing, and a pin without a key (or a key without a pin) fails.
+7. **check**: puts the signatures on the site and runs `check-site` against the pin. It uploads
+   `<artifact-prefix>-site`.
+8. **deploy** (in `pages-environment`), when `deploy` is true: skips a re-run of an older release
    (`skip-if-newer`, comparing `tag` with the newest published release, `sort -V`). Keep every
    release tag in one scheme: `sort -V` puts `v1.0` above `2.0`, so a tag of another scheme can
    stop every later deploy. Merges
    `extra-artifact-ids` into the site root, refusing to overwrite a site file, and deploys.
 
 Artifacts move between the jobs by ID, so an artifact of the caller's with the same name can't
-replace them. An empty `signing-environment` runs `sign` and `repo` without an environment.
+replace them. An empty `signing-environment` runs `sign` and `seal` without an environment.
 Without one, `signing-key` resolves only from a repository secret, so keep the key in an
-environment. `ref` picks the commit that `public-key` is read from: the released tag, say, when
-the calling run's commit is not the release.
+environment; one with required reviewers asks for approval in both jobs. `ref` picks the commit
+that `public-key` is read from: the released tag, say, when the calling run's commit is not the
+release.
+
+`tag` must contain only letters, digits and `. _ + / -`. `keyring-package` (default true) adds the
+`<name>-keyring` `.deb` and makes `deb/<name>.list` use it as the APT key; `false` opts out.
+`resign-history` (default false) is for the one-run bootstraps of
+[upgrading.md](upgrading.md) and [signing.md](signing.md#bootstrapping).
 
 The calling job grants the maximum permissions ([C4](design.md#c4-permissions-only-go-down)). It
 must grant all three, even with `deploy: false`, because GitHub checks every job's permissions
@@ -451,12 +473,17 @@ packages:
        {"distro":"ubuntu","arch":"x86_64"},{"distro":"fedora","arch":"aarch64"},
        {"distro":"debian","arch":"aarch64"}]
     smoke: mytool --version
+    history-from: site # releases: only for the one-run bootstrap (docs/upgrading.md)
+    keyring-package: true
   secrets:
     signing-key: ${{ secrets.REPO_SIGNING_KEY }}
 ```
 
 - Attach the `.rpm` files from `signed-rpm-artifact-id` to your GitHub release, not the build's
   unsigned copies, so the release page and the DNF repository serve the same bytes.
+- Outputs: `signed`, `fingerprint`, `signed-rpm-artifact-id`, `deb-artifact-id`,
+  `keyring-artifact-id` (empty when unsigned or `keyring-package` is false), `site-artifact-id`
+  and `page-url`.
 - `deploy: false` only builds and uploads the site (`site-artifact-id`), for a caller that
   deploys later, after its own post-publish checks say.
 - Calling it twice in one run needs a different `artifact-prefix` for each call.
