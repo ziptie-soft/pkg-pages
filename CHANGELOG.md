@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.0.0](https://github.com/ziptie-soft/pkg-pages/compare/v1.2.0...v2.0.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **publish:** publish.yml's jobs are renamed (update required status checks); earlier releases come from the live site (run once with history-from: releases if your site predates v1.3); resign-history defaults to false; signed sites publish <name>-keyring.
+* **fetch-history:** fetch-history reads the live site's signed manifest; pass public-key, or set from: releases to keep the old behaviour.
+* **build-repo:** an earlier release's .rpm that doesn't verify against the pin now fails the build; set resign-history: true for one run to re-sign it.
+* **build-repo:** signed sites add a <name>-keyring .deb, and deb/<name>.list now uses signed-by=/usr/share/keyrings/<name>-keyring.asc; set keyring-package: false to opt out.
+* **build-repo:** build-repo needs tag, and takes earlier releases as history and history-map (from fetch-history) instead of inside packages.
+
+### Features
+
+* **build-repo:** publish a &lt;name&gt;-keyring package by default ([05153e6](https://github.com/ziptie-soft/pkg-pages/commit/05153e60ebb761e40e90663def86d776014f74cd))
+* **build-repo:** refuse unproven earlier .rpm files unless resign-history is true ([ff76726](https://github.com/ziptie-soft/pkg-pages/commit/ff76726bec21bb84dae7a878f5a06b582b5b8c1b))
+* **build-repo:** run the key and the package parsing in separate containers, with earlier releases passed as history ([425884c](https://github.com/ziptie-soft/pkg-pages/commit/425884ced89fc649f995626894cb3d2c63e9ba6a))
+* **fetch-history:** fetch earlier releases from the live site by default ([20d3336](https://github.com/ziptie-soft/pkg-pages/commit/20d3336fb78094411cda01977c08c0cfd2ecc54f))
+* **publish:** build without the key, sign in separate jobs, and take earlier releases from the site ([c589041](https://github.com/ziptie-soft/pkg-pages/commit/c58904105183e914a966d61ec34c212edcba624d))
+
 ## [1.2.0](https://github.com/ziptie-soft/pkg-pages/compare/v1.1.1...v1.2.0) (2026-11-14)
 
 
