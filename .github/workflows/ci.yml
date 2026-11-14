@@ -415,9 +415,9 @@ jobs:
           grep -q 'signed-by=/usr/share/keyrings/pptest-keyring.asc' site1/deb/pptest.list
           # The manifest: this release's packages, then the keyring package.
           test "$(head -n 1 site1/pkg-pages.tsv | cut -f1-3)" = "$(printf '#pkg-pages-manifest\t1\tpptest')"
-          grep -q "^release	v1.0.0	[0-9a-f]\{64\}	deb/pool/main/p/pptest/" site1/pkg-pages.tsv
+          grep -qP '^release\tv1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/' site1/pkg-pages.tsv
           test "$(tail -n 1 site1/pkg-pages.tsv | cut -f1)" = keyring
-          grep -q 'GPG' site1/pkg-pages.tsv.asc || grep -q 'BEGIN PGP SIGNATURE' site1/pkg-pages.tsv.asc
+          grep -q 'BEGIN PGP SIGNATURE' site1/pkg-pages.tsv.asc
 
       # What a user does, with the site's own files: the keyring first, then the packages. APT gets
       # the key from the keyring package; dnf from the .repo's gpgkey= (the revoked subkey is not in
@@ -454,6 +454,124 @@ jobs:
               grep -qx repo_gpgcheck=1 "${SITE}/rpm/pptest.repo"
               cp "${SITE}/rpm/pptest.repo" /etc/yum.repos.d/pptest.repo
               dnf install -y --repo pptest pptest pptest-data
+              test -f /usr/share/pptest/1.0.0
+              test -f /usr/share/pptest-data/1.0.0
+            '
+          done
+
+      # The next release: its history comes from the live site (here a file:/// URL), checked against
+      # the signed manifest, and is laid beside the new packages by build-site.
+      - name: fetch-history (from the site)
+        id: history
+        uses: ./fetch-history
+        with:
+          dir: history
+          from: site
+          url: file://${{ github.workspace }}/site1
+          name: pptest
+          public-key: test-signing/repo.asc
+          tags: v1.0.0
+          map: history.map
+
+      - name: sign-rpm (1.1.0)
+        uses: ./sign-rpm
+        with:
+          packages: dist-1.1.0/*.rpm
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
+      - name: build-site (1.1.0, with the history)
+        id: build2
+        uses: ./build-site
+        with:
+          packages: dist-1.1.0
+          history: history
+          history-map: ${{ steps.history.outputs.map }}
+          keyring: keyring
+          tag: v1.1.0
+          version: 1.1.0
+          name: pptest
+          base-url: file://${{ github.workspace }}/site2
+          deb-architectures: amd64
+          rpm-architectures: x86_64
+          public-key: test-signing/repo.asc
+          out: site2
+
+      - name: seal-site (1.1.0)
+        uses: ./seal-site
+        with:
+          site: site2
+          to-sign: ${{ steps.build2.outputs.to-sign }}
+          public-key: test-signing/repo.asc
+          signing-key: ${{ steps.fixtures.outputs.key }}
+
+      - name: check-site (1.1.0)
+        uses: ./check-site
+        with:
+          site: site2
+          name: pptest
+          version: 1.1.0
+          deb-architectures: amd64
+          public-key: test-signing/repo.asc
+          upload: 'false'
+
+      - name: Check the history and the second site
+        env:
+          HISTORY_TAGS: ${{ steps.history.outputs.tags }}
+          HISTORY_MAP: ${{ steps.history.outputs.map }}
+        run: |
+          set -euo pipefail
+          test "${HISTORY_TAGS}" = v1.0.0
+          # The map names every fetched file by its tag, SHA-256 and path; the keyring has no tag.
+          test "$(cut -f4 "${HISTORY_MAP}" | sort -u)" = site
+          grep -qP '^v1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/pptest_1\.0\.0-1_amd64\.deb\tsite$' "${HISTORY_MAP}"
+          grep -qP '^-\t[0-9a-f]{64}\tdeb/pool/main/p/pptest-keyring/pptest-keyring_[0-9.]+_all\.deb\tsite$' "${HISTORY_MAP}"
+          # This release first, then the history, the keyring package last, once.
+          tags="$(awk -F'\t' '$1 == "release" && !seen[$2]++ { printf "%s ", $2 }' site2/pkg-pages.tsv)"
+          test "${tags}" = 'v1.1.0 v1.0.0 '
+          test "$(cut -f1 site2/pkg-pages.tsv | grep -c '^keyring$')" -eq 1
+          test "$(tail -n 1 site2/pkg-pages.tsv | cut -f1)" = keyring
+          # The history is the bytes site1 published, not rebuilt: the same files, byte for byte.
+          cmp site1/deb/pool/main/p/pptest/pptest_1.0.0-1_amd64.deb site2/deb/pool/main/p/pptest/pptest_1.0.0-1_amd64.deb
+          cmp site1/rpm/x86_64/pptest-1.0.0-1.x86_64.rpm site2/rpm/x86_64/pptest-1.0.0-1.x86_64.rpm
+          # Both versions are in the indexes, and the keyring package is not duplicated.
+          gzip -cd site2/deb/dists/stable/main/binary-amd64/Packages.gz | grep -c '^Package: pptest-keyring$' | grep -qx 1
+
+      - name: Install every version from the second site (APT)
+        env:
+          SITE: ${{ github.workspace }}/site2
+        run: |
+          set -euo pipefail
+          for var in DEBIAN_IMAGE UBUNTU_IMAGE; do
+            image="$(sed -n "s/^${var}=//p" images.env)"
+            docker run --rm --security-opt label=disable -v "${SITE}:${SITE}:ro" -e SITE "${image}" sh -euc '
+              install -d /usr/share/keyrings
+              cp "${SITE}/pptest.asc" /usr/share/keyrings/pptest-keyring.asc
+              cp "${SITE}/deb/pptest.list" /etc/apt/sources.list.d/pptest.list
+              apt-get update -qq
+              apt-get install -y -qq pptest-keyring
+              # An earlier version, by pinning it, then the newest.
+              apt-get install -y -qq pptest=1.0.0-1 pptest-data=1.0.0
+              test -f /usr/share/pptest/1.0.0-1
+              apt-get install -y -qq pptest pptest-data
+              test -f /usr/share/pptest/1.1.0-1
+              test -f /usr/share/pptest-data/1.1.0
+            '
+          done
+
+      - name: Install every version from the second site (DNF)
+        env:
+          SITE: ${{ github.workspace }}/site2
+        run: |
+          set -euo pipefail
+          for var in FEDORA_IMAGE ALMALINUX_IMAGE; do
+            image="$(sed -n "s/^${var}=//p" images.env)"
+            docker run --rm --security-opt label=disable -v "${SITE}:${SITE}:ro" -e SITE "${image}" sh -euc '
+              cp "${SITE}/rpm/pptest.repo" /etc/yum.repos.d/pptest.repo
+              dnf install -y --repo pptest pptest pptest-data
+              test -f /usr/share/pptest/1.1.0
+              # An earlier version, by downgrading to it.
+              dnf downgrade -y --repo pptest pptest-1.0.0 pptest-data-1.0.0
               test -f /usr/share/pptest/1.0.0
               test -f /usr/share/pptest-data/1.0.0
             '
