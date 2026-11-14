@@ -1,14 +1,52 @@
-# fetch-history: download the .deb/.rpm assets of the latest published releases, so the site keeps
-# earlier versions (Pages replaces the whole site on every deploy). Contract:
-# docs/actions.md#fetch-history.
+# fetch-history: fetch the .deb/.rpm files of earlier releases, from the GitHub releases or from
+# the live site (checked against its signed manifest), so the site keeps earlier versions (Pages
+# replaces the whole site on every deploy). Contract: docs/actions.md#fetch-history.
 name: pkg-pages fetch-history
-description: Download earlier GitHub releases' .deb and .rpm assets for an APT/DNF repository
+description: Fetch earlier releases' .deb and .rpm files, from GitHub releases or the live site, for an APT/DNF repository
 author: ziptie-soft
 
 inputs:
   dir:
-    description: Directory to download into (created if missing). Existing files are kept; an asset whose name a different file already has is stored as <tag>_<name>.
+    description: >-
+      Directory to download into (created if missing). From releases, existing files are kept: an
+      asset whose name a different file already has is stored as <tag>_<name>. From the site, files
+      keep their site paths (deb/pool/..., rpm/<arch>/...).
     required: true
+  from:
+    description: >-
+      Where the files come from: releases (the assets of the GitHub releases) or site (the live
+      site, checked against its signed pkg-pages.tsv manifest).
+    required: false
+    default: releases
+  url:
+    description: >-
+      With from site, where the live site is served (https://, or file:/// for tests). Defaults to
+      build-repo's base-url default, https://<owner, lowercased>.github.io/<repo>.
+    required: false
+    default: ''
+  public-key:
+    description: >-
+      With from site, the path, in the caller's checkout, of the committed public key (the pin). File
+      present: the manifest must be signed by it. File absent: the site must be unsigned.
+    required: false
+    default: packaging/signing/repo.asc
+  name:
+    description: With from site, the site's name, as in the manifest header. Defaults to the repository name.
+    required: false
+    default: ''
+  tags:
+    description: >-
+      Newline- or space-separated release tags to fetch, newest first, instead of the GitHub
+      release list (keep, exclude-tag and include-prereleases then don't apply). From the site
+      this needs no gh and no token.
+    required: false
+    default: ''
+  map:
+    description: >-
+      Path to write the history map to (one line per file: tag, SHA-256, path in dir, and
+      site or release), for build-site and sign-rpm. Empty: no map.
+    required: false
+    default: ''
   keep:
     description: How many published releases before the current one to fetch (0 = none).
     required: false
@@ -38,8 +76,11 @@ inputs:
 
 outputs:
   tags:
-    description: Space-separated tags whose assets were fetched.
+    description: Space-separated tags whose files were fetched.
     value: ${{ steps.run.outputs.tags }}
+  map:
+    description: The history map's path, when map is set.
+    value: ${{ steps.run.outputs.map }}
 
 runs:
   using: composite
@@ -49,6 +90,12 @@ runs:
       shell: bash
       env:
         INPUT_DIR: ${{ inputs.dir }}
+        INPUT_FROM: ${{ inputs.from }}
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_PUBLIC_KEY: ${{ inputs.public-key }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_TAGS: ${{ inputs.tags }}
+        INPUT_MAP: ${{ inputs.map }}
         INPUT_KEEP: ${{ inputs.keep }}
         INPUT_PATTERNS: ${{ inputs.patterns }}
         INPUT_EXCLUDE_TAG: ${{ inputs.exclude-tag }}

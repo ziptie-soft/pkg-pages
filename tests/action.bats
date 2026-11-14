@@ -437,6 +437,80 @@ dist/none-*.rpm'
     assert_status 1
 }
 
+# fetch_args: run `action.sh fetch-history` against a copy of lib/ whose fetch-history.sh only
+# records its arguments, one per line, in fetch.args.
+fetch_args() {
+    rm -rf "${TMP:?}/lib"
+    cp -R "$LIB" "$TMP/lib"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$FAKE_LOG/fetch.args"\n' > "$TMP/lib/fetch-history.sh"
+    export INPUT_DIR="${INPUT_DIR-hist}"
+    run "$TMP/lib/action.sh" fetch-history
+}
+
+# fetch_arg_after A: the argument that follows A in the recorded fetch-history.sh arguments.
+fetch_arg_after() {
+    awk -v a="$1" 'prev == a { print; exit } { prev = $0 }' "$TMP/fetch.args"
+}
+
+@test "fetch-history defaults: releases, as before, with no site arguments" {
+    fetch_args
+    assert_status 0
+    [ "$(fetch_arg_after --dir)" = hist ]
+    [ "$(fetch_arg_after --from)" = releases ]
+    [ "$(fetch_arg_after --keep)" = 9 ]
+    [ "$(fetch_arg_after --patterns)" = '*.deb *.rpm' ]
+    [ "$(fetch_arg_after --repository)" = SkeLLLa/Star_Forge ]
+    [ "$(fetch_arg_after --include-prereleases)" = false ]
+    [ -z "$(fetch_arg_after --tags)" ]
+    [ -z "$(fetch_arg_after --map)" ]
+    for a in --url --name --public-key; do
+        refute grep -qx -- "$a" "$TMP/fetch.args"
+    done
+}
+
+@test "fetch-history from the site: url, name and pin default as build-repo's do" {
+    export INPUT_FROM=site INPUT_TAGS='v1.0.0
+v0.9.0' INPUT_MAP=hist.map
+    fetch_args
+    assert_status 0
+    [ "$(fetch_arg_after --from)" = site ]
+    [ "$(fetch_arg_after --url)" = https://skellla.github.io/Star_Forge ]
+    [ "$(fetch_arg_after --name)" = star-forge ]
+    [ "$(fetch_arg_after --public-key)" = packaging/signing/repo.asc ]
+    [ "$(fetch_arg_after --tags)" = 'v1.0.0 v0.9.0' ]
+    [ "$(fetch_arg_after --map)" = hist.map ]
+    export GITHUB_REPOSITORY=Owner/owner.github.io
+    fetch_args
+    [ "$(fetch_arg_after --url)" = https://owner.github.io ]
+    export INPUT_URL=file:///srv/site INPUT_NAME=hello INPUT_PUBLIC_KEY=keys/pin.asc
+    fetch_args
+    [ "$(fetch_arg_after --url)" = file:///srv/site ]
+    [ "$(fetch_arg_after --name)" = hello ]
+    [ "$(fetch_arg_after --public-key)" = keys/pin.asc ]
+    # With the address and the name given, no repository is needed.
+    unset GITHUB_REPOSITORY
+    fetch_args
+    assert_status 0
+    unset INPUT_URL
+    fetch_args
+    assert_status 1
+    assert_output_contains "base-url is empty"
+}
+
+@test "fetch-history rejects a bad source and paths that leave the checkout" {
+    export INPUT_FROM=ftp
+    fetch_args; assert_status 1; assert_output_contains "from must be"
+    export INPUT_FROM=releases INPUT_MAP=../hist.map
+    fetch_args; assert_status 1
+    export INPUT_MAP=/tmp/hist.map
+    fetch_args; assert_status 1
+    unset INPUT_MAP
+    export INPUT_DIR=../hist
+    fetch_args; assert_status 1
+    export INPUT_FROM=site INPUT_DIR=hist INPUT_PUBLIC_KEY=/etc/pin.asc
+    fetch_args; assert_status 1
+}
+
 @test "install-test: the distro image, the network, and the smoke command by environment, not argv" {
     touch x.deb
     export INPUT_PACKAGES=x.deb INPUT_DISTRO=ubuntu INPUT_SMOKE='hello --version; echo ok'

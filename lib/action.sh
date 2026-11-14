@@ -79,32 +79,38 @@ with_files() {
     "$@"
 }
 
-# name_input: the name input, or the repository name, lowercased, with _ turned into -.
+# default_name: the repository name, lowercased, with _ turned into -.
+default_name() {
+    _repo="${GITHUB_REPOSITORY:-}"
+    [ -n "$_repo" ] || die "name is empty and GITHUB_REPOSITORY is not set"
+    printf '%s\n' "${_repo#*/}" | tr '[:upper:]' '[:lower:]' | tr _ -
+}
+
+# default_base_url: https://<owner>.github.io/<repo> from the repository, lowercased as GitHub
+# serves it; a user or organisation site (<owner>.github.io) is served at the root.
+default_base_url() {
+    _repo="${GITHUB_REPOSITORY:-}"
+    [ -n "$_repo" ] || die "base-url is empty and GITHUB_REPOSITORY is not set"
+    _owner="$(printf '%s' "${_repo%%/*}" | tr '[:upper:]' '[:lower:]')"
+    _rname="${_repo#*/}"
+    if [ "$(printf '%s' "$_rname" | tr '[:upper:]' '[:lower:]')" = "$_owner.github.io" ]; then
+        printf 'https://%s.github.io\n' "$_owner"
+    else
+        printf 'https://%s.github.io/%s\n' "$_owner" "$_rname"
+    fi
+}
+
+# name_input: the name input, or default_name.
 name_input() {
     _n="$(input NAME)"
-    if [ -z "$_n" ]; then
-        _repo="${GITHUB_REPOSITORY:-}"
-        [ -n "$_repo" ] || die "name is empty and GITHUB_REPOSITORY is not set"
-        _n="$(printf '%s' "${_repo#*/}" | tr '[:upper:]' '[:lower:]' | tr _ -)"
-    fi
+    [ -n "$_n" ] || _n="$(default_name)"
     printf '%s\n' "$_n"
 }
 
-# base_url_input: the base-url input, or https://<owner>.github.io/<repo> from the repository.
+# base_url_input: the base-url input, or default_base_url.
 base_url_input() {
     _u="$(input BASE_URL)"
-    if [ -z "$_u" ]; then
-        _repo="${GITHUB_REPOSITORY:-}"
-        [ -n "$_repo" ] || die "base-url is empty and GITHUB_REPOSITORY is not set"
-        _owner="$(printf '%s' "${_repo%%/*}" | tr '[:upper:]' '[:lower:]')"
-        _rname="${_repo#*/}"
-        # A user or organisation site (<owner>.github.io) is served at the root.
-        if [ "$(printf '%s' "$_rname" | tr '[:upper:]' '[:lower:]')" = "$_owner.github.io" ]; then
-            _u="https://$_owner.github.io"
-        else
-            _u="https://$_owner.github.io/$_rname"
-        fi
-    fi
+    [ -n "$_u" ] || _u="$(default_base_url)"
     printf '%s\n' "$_u"
 }
 
@@ -316,12 +322,31 @@ check_rpm() {
 fetch_history() {
     dir="$(input DIR)"
     check_relpath dir "$dir"
+    from="$(input_or FROM releases)"
+    case "$from" in
+        releases | site) ;;
+        *) die "from must be 'releases' or 'site', not '$from'" ;;
+    esac
+    map="$(input MAP)"
+    [ -z "$map" ] || check_relpath map "$map"
+    # Newlines or spaces between the tags; the script reads words.
+    tags="$(printf '%s' "$(input TAGS)" | tr '\n' ' ')"
+    # The site's address and name default as build-repo's do, so the same repository finds its own site.
+    set -- --from "$from"
+    if [ "$from" = site ]; then
+        url="$(input URL)"
+        [ -n "$url" ] || url="$(default_base_url)"
+        name="$(name_input)"
+        pin="$(public_key)"
+        set -- "$@" --url "$url" --name "$name" --public-key "$pin"
+    fi
     "$lib/fetch-history.sh" --dir "$dir" \
         --keep "$(input_or KEEP 9)" \
         --patterns "$(input_or PATTERNS '*.deb *.rpm')" \
         --exclude-tag "$(input EXCLUDE_TAG)" \
         --include-prereleases "$(input_or INCLUDE_PRERELEASES false)" \
-        --repository "$(input_or REPOSITORY "${GITHUB_REPOSITORY:-}")"
+        --repository "$(input_or REPOSITORY "${GITHUB_REPOSITORY:-}")" \
+        --tags "$tags" --map "$map" "$@"
 }
 
 install_test() {
