@@ -198,6 +198,22 @@ It imports the key, failing closed against `public-key`, then signs each file in
 replaced. Afterwards it checks every file as `check-rpm` does. With no pin and no key, it
 changes nothing and outputs `signed=false`.
 
+**Earlier releases** (`history` and `history-map`, from [`fetch-history`](#fetch-history)): the
+history's `.rpm` files follow the current subkey, so a subkey that was revoked or has expired
+doesn't leave old packages that clients refuse. After this release's files (`packages` may be
+empty when `history` is set), every `.rpm` in `history` that a held subkey did not sign is signed
+again in place, but only when its bytes are proven:
+
+- a `site` file was checked by `fetch-history` against the live site's signed manifest, so
+  whoever signed it, the bytes are the ones published;
+- a `release` file (from `from: releases`) must verify against the pin. One that doesn't is
+  unproven: an error, unless `resign-history: 'true'`, which signs it again with a warning. That
+  is a one-run bootstrap tool (a site that predates signing, or a lost site), never a default.
+
+Files a held subkey signed stay byte-identical. Every `.rpm` under `history` must be in the map
+and match its SHA-256, or it fails. The map is rewritten with the new SHA-256 values, and its path
+is the `history-map` output, for `build-site`. With no pin and no key, nothing is changed.
+
 It doesn't upload anything; the caller re-uploads the signed files:
 
 ```yaml

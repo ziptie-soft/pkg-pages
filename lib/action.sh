@@ -294,17 +294,36 @@ check_site() {
 sign_rpm() {
     mode="$(runner_mode)"
     pin="$(public_key)"
-    lists=''
-    make_tmpdir lists
-    expand_files > "$lists/files"
-    # run.sh arguments: --writes FILE for each file (rpmsign replaces the file, so in docker mode
-    # the new one is root's and must be chowned back), then the command and the files.
-    set --
-    while IFS= read -r f; do set -- "$@" --writes "$f"; done < "$lists/files"
-    set -- "$@" -- "$lib/linux-signing.sh" --pin "$pin" sign-rpm
-    while IFS= read -r f; do set -- "$@" "$f"; done < "$lists/files"
-    "$lib/run.sh" "$mode" --image fedora --tools "gpg rpmsign rpmkeys" \
-        --gnupg --env REPO_SIGNING_KEY "$@"
+    history="$(input HISTORY)" history_map="$(input HISTORY_MAP)"
+    [ -z "$history$history_map" ] || {
+        [ -n "$history" ] && [ -n "$history_map" ] || die "history and history-map must be set together"
+        check_relpath history "$history"
+        check_relpath history-map "$history_map"
+    }
+    resign="$(input_or RESIGN_HISTORY false)"
+    check_bool resign-history "$resign"
+    # packages may be empty only when there is a history to sign.
+    if [ -n "$(input PACKAGES)" ] || [ -z "$history" ]; then
+        lists=''
+        make_tmpdir lists
+        expand_files > "$lists/files"
+        # run.sh arguments: --writes FILE for each file (rpmsign replaces the file, so in docker
+        # mode the new one is root's and must be chowned back), then the command and the files.
+        set --
+        while IFS= read -r f; do set -- "$@" --writes "$f"; done < "$lists/files"
+        set -- "$@" -- "$lib/linux-signing.sh" --pin "$pin" sign-rpm
+        while IFS= read -r f; do set -- "$@" "$f"; done < "$lists/files"
+        "$lib/run.sh" "$mode" --image fedora --tools "gpg rpmsign rpmkeys" \
+            --gnupg --env REPO_SIGNING_KEY "$@"
+    fi
+    if [ -n "$history" ]; then
+        # Earlier releases follow the current subkey: the files and the map are rewritten.
+        "$lib/run.sh" "$mode" --image fedora --tools "gpg rpmsign rpmkeys" \
+            --gnupg --env REPO_SIGNING_KEY --writes "$history" --writes "$history_map" -- \
+            "$lib/linux-signing.sh" --pin "$pin" sign-history --map "$history_map" \
+            --resign-unproven "$resign" "$history"
+        set_output history-map "$history_map"
+    fi
 }
 
 check_rpm() {
