@@ -38,10 +38,14 @@ signed APT and DNF repositories on GitHub Pages. It should:
 <base-url>/
   index.html               landing page: theme, install commands, fingerprint, latest version, footer
   <name>.asc               the public key (the committed pin, with revocations), when signed
+  pkg-pages.tsv            every package file by SHA-256 and release tag, when a tag was given
+  pkg-pages.tsv.asc        its detached signature, when signed
   .nojekyll
   deb/
     <name>.list            deb [signed-by=/etc/apt/keyrings/<name>.asc] <base-url>/deb stable main
-    pool/main/<p>/<pkg>/   the .deb files (<p>: first letter, or lib<x> for lib* packages)
+                           (signed-by=/usr/share/keyrings/<name>-keyring.asc with the keyring package)
+    pool/main/<p>/<pkg>/   the .deb files (<p>: first letter, or lib<x> for lib* packages),
+                           and <name>-keyring_<version>_all.deb, the pin as an APT key, when asked
     dists/stable/
       Release, InRelease, Release.gpg
       main/binary-<arch>/Packages, Packages.gz
@@ -62,6 +66,14 @@ file.
 | each `.rpm` (release page and DNF repo) | dnf `gpgcheck=1`, `rpm -K` |
 | `rpm/<arch>/repodata/repomd.xml` (`repomd.xml.asc`) | dnf `repo_gpgcheck=1` |
 | APT `InRelease` and `Release.gpg` | apt `signed-by=`; `InRelease` lists every `.deb`'s SHA-256 |
+| `pkg-pages.tsv` (`pkg-pages.tsv.asc`) | the next release, which takes the earlier releases from the site by these SHA-256 values |
+
+`pkg-pages.tsv` is tab-separated with LF line endings. The header is
+`#pkg-pages-manifest`, `1`, the name and the pin's primary fingerprint (`-` when unsigned). Each
+following line is `release`, the release tag, the SHA-256 and the path of a package file (a `noarch`
+copy per architecture included), and the `<name>-keyring` package is a `keyring` line with `-` for
+the tag, last. The current tag comes first, then the earlier tags in the order of the history map,
+each sorted by path.
 
 ## Components
 

@@ -48,6 +48,11 @@ build() {
 # build_signed [OPTION]...: the same, importing key a against its pin.
 # shellcheck disable=SC2120 # the options are optional
 build_signed() {
+    # A second build in one test starts with a fresh home, as a second step would.
+    if [ -d "$TMP/gnupg" ]; then
+        gpgconf --homedir "$TMP/gnupg" --kill all > /dev/null 2>&1 || true
+        rm -rf "$TMP/gnupg"
+    fi
     gnupg_home
     REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
     export REPO_SIGNING_KEY
@@ -786,6 +791,338 @@ seal() {
     seal_other
     assert_status 1
     [ ! -e "$TMP/ss/pkg-pages.tsv.asc" ]
+}
+
+# --- The manifest, the keyring package and the stages ----------------------------------------
+
+# mline KIND TAG FILE PATH: pkg-pages.tsv has the line KIND, TAG, the SHA-256 of FILE and PATH.
+mline() {
+    want="$(printf '%s\t%s\t%s\t%s' "$1" "$2" "$(sha "$3")" "$4")"
+    grep -qxF "$want" "$TMP/site/pkg-pages.tsv" || {
+        printf 'no manifest line for %s %s %s\nmanifest:\n' "$1" "$2" "$4" >&2
+        cat "$TMP/site/pkg-pages.tsv" >&2
+        return 1
+    }
+}
+
+# presign FILE...: sign the .rpm files with key a beforehand, as sign-rpm does in publish.yml.
+presign() {
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
+    export REPO_SIGNING_KEY
+    "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" sign-rpm "$@" 2> /dev/null
+    rm -rf "$GNUPGHOME"
+}
+
+@test "manifest: every package file by SHA-256 under its tag, the current tag first, each sorted" {
+    need_both
+    pkgs deb rpm
+    # A pre-release version has a ~ in its file name.
+    "$FIXTURES" deb "$TMP/pkgs" hello 1.2.3~rc1-1 amd64
+    # Earlier releases, named by SHA-256, in the order their tags must come out.
+    {
+        printf 'v1.2.2\t%s\thello-1.2.2-1.x86_64.rpm\tsite\n' "$(sha "$P/rpm/hello-1.2.2-1.x86_64.rpm")"
+        printf 'v1.2.1\t%s\thello_1.2.2-1_amd64.deb\tsite\n' "$(sha "$P/deb/hello_1.2.2-1_amd64.deb")"
+        printf 'v1.2.0\t%s\thello_1.2.3~rc1-1_amd64.deb\trelease\n' "$(sha "$TMP/pkgs/hello_1.2.3~rc1-1_amd64.deb")"
+    } > "$TMP/h.map"
+    build --tag v1.2.3 --history-map "$TMP/h.map"
+    assert_status 0
+    m="$TMP/site/pkg-pages.tsv"
+    [ "$(head -n 1 "$m" | tr '\t' ' ')" = '#pkg-pages-manifest 1 hello -' ]
+    [ "$(tail -n +2 "$m" | cut -f1,2 | uniq | tr '\t' ' ')" = $'release v1.2.3\nrelease v1.2.2\nrelease v1.2.1\nrelease v1.2.0' ]
+    for t in v1.2.3 v1.2.2 v1.2.1 v1.2.0; do
+        awk -F'\t' -v t="$t" '$2 == t { print $4 }' "$m" > "$TMP/paths"
+        LC_ALL=C sort "$TMP/paths" | cmp - "$TMP/paths"
+    done
+    mline release v1.2.3 "$P/deb/hello_1.2.3-1_amd64.deb" deb/pool/main/h/hello/hello_1.2.3-1_amd64.deb
+    mline release v1.2.3 "$P/deb/hello-doc_1.2.3_all.deb" deb/pool/main/h/hello-doc/hello-doc_1.2.3_all.deb
+    mline release v1.2.3 "$P/rpm/hello-doc-1.2.3-1.noarch.rpm" rpm/x86_64/hello-doc-1.2.3-1.noarch.rpm
+    mline release v1.2.3 "$P/rpm/hello-doc-1.2.3-1.noarch.rpm" rpm/aarch64/hello-doc-1.2.3-1.noarch.rpm
+    mline release v1.2.2 "$P/rpm/hello-1.2.2-1.x86_64.rpm" rpm/x86_64/hello-1.2.2-1.x86_64.rpm
+    mline release v1.2.1 "$P/deb/hello_1.2.2-1_amd64.deb" deb/pool/main/h/hello/hello_1.2.2-1_amd64.deb
+    mline release v1.2.0 "$TMP/pkgs/hello_1.2.3~rc1-1_amd64.deb" 'deb/pool/main/h/hello/hello_1.2.3~rc1-1_amd64.deb'
+    # Every package file of the site, and no other line.
+    [ "$(tail -n +2 "$m" | wc -l)" -eq "$(find "$TMP/site/deb/pool" "$TMP/site/rpm" -name '*.deb' -o -name '*.rpm' | wc -l)" ]
+    # Without --tag there is no manifest.
+    rm -rf "$TMP/site"
+    build
+    assert_status 0
+    [ ! -e "$TMP/site/pkg-pages.tsv" ]
+}
+
+@test "manifest: earlier files keep their tag once re-signed, and the signed manifest names the pin" {
+    need_rpm
+    need gpgv rpmsign rpmkeys
+    pkgs rpm
+    presign "$TMP/pkgs/hello-1.2.3-1.x86_64.rpm" "$TMP/pkgs/hello-1.2.3-1.aarch64.rpm" "$TMP/pkgs/hello-doc-1.2.3-1.noarch.rpm"
+    old="$(sha "$TMP/pkgs/hello-1.2.2-1.x86_64.rpm")"
+    printf 'v1.2.2\t%s\thello-1.2.2-1.x86_64.rpm\tsite\n' "$old" > "$TMP/h.map"
+    build_signed --tag v1.2.3 --history-map "$TMP/h.map"
+    assert_status 0
+    [ "$(sha "$TMP/site/rpm/x86_64/hello-1.2.2-1.x86_64.rpm")" != "$old" ]
+    mline release v1.2.2 "$TMP/site/rpm/x86_64/hello-1.2.2-1.x86_64.rpm" rpm/x86_64/hello-1.2.2-1.x86_64.rpm
+    mline release v1.2.3 "$TMP/pkgs/hello-1.2.3-1.x86_64.rpm" rpm/x86_64/hello-1.2.3-1.x86_64.rpm
+    [ "$(head -n 1 "$TMP/site/pkg-pages.tsv" | tr '\t' ' ')" = "#pkg-pages-manifest 1 hello $(cat "$K/a/fpr")" ]
+    gpg --batch --dearmor < "$K/a/pin.asc" > "$TMP/pin.gpg"
+    gpgv --keyring "$TMP/pin.gpg" "$TMP/site/pkg-pages.tsv.asc" "$TMP/site/pkg-pages.tsv"
+    # The input is untouched, and the map file too.
+    [ "$(sha "$TMP/pkgs/hello-1.2.2-1.x86_64.rpm")" = "$old" ]
+    [ "$(cut -f2 "$TMP/h.map")" = "$old" ]
+}
+
+@test "a history map needs a tag, and a history file that is not in the map is an error" {
+    need_deb
+    pkgs deb
+    printf 'v1.2.2\t%s\thello_1.2.2-1_amd64.deb\tsite\n' "$(sha "$P/deb/hello_1.2.2-1_amd64.deb")" > "$TMP/h.map"
+    build --history-map "$TMP/h.map"
+    assert_status 1
+    assert_output_contains "--history-map needs --tag"
+    # site-build.sh on its own: a history file the map doesn't name.
+    mkdir -p "$TMP/cur" "$TMP/hist"
+    cp "$P/deb/hello_1.2.3-1_amd64.deb" "$TMP/cur/"
+    cp "$P/deb/hello_1.2.2-1_amd64.deb" "$TMP/hist/"
+    printf 'v1.2.2\t%s\tother.deb\tsite\n' "$(printf x | sha256sum | cut -d' ' -f1)" > "$TMP/other.map"
+    sbuild() { run "$LIB/site-build.sh" --packages "$TMP/cur" --out "$TMP/site" --base-url "file://$TMP/site" --version 1.2.3 --name hello "$@"; }
+    sbuild --tag v1.2.3 --history "$TMP/hist" --history-map "$TMP/other.map"
+    assert_status 1
+    assert_output_contains "is not in the history map"
+    sbuild --tag v1.2.3 --history "$TMP/hist"
+    assert_status 1
+    assert_output_contains "must be given together"
+    sbuild --history "$TMP/hist" --history-map "$TMP/h.map"
+    assert_status 1
+    assert_output_contains "--history needs --tag"
+    sbuild --tag v1.2.3 --history "$TMP/hist" --history-map "$TMP/h.map"
+    assert_status 0
+    mline release v1.2.2 "$P/deb/hello_1.2.2-1_amd64.deb" deb/pool/main/h/hello/hello_1.2.2-1_amd64.deb
+    mline release v1.2.3 "$P/deb/hello_1.2.3-1_amd64.deb" deb/pool/main/h/hello/hello_1.2.3-1_amd64.deb
+}
+
+@test "a package named <name>-keyring is refused, .deb and .rpm alike" {
+    need_both
+    pkgs deb rpm
+    "$FIXTURES" deb "$TMP/kr" hello-keyring 1.2.3-1 amd64
+    cp "$TMP/kr"/*.deb "$TMP/pkgs/"
+    build
+    assert_status 1
+    assert_output_contains "hello-keyring"
+    assert_output_contains "reserves"
+    rm -f "$TMP/pkgs"/hello-keyring*
+    "$FIXTURES" rpm "$TMP/kr2" hello-keyring 1.2.3 noarch
+    cp "$TMP/kr2"/*.rpm "$TMP/pkgs/"
+    build --keyring-package false
+    assert_status 1
+    assert_output_contains "reserves"
+}
+
+@test "keyring package: published with the packages, named by the .list and the landing page" {
+    need_deb
+    need gpgv
+    pkgs deb
+    build_signed --tag v1.2.3 --keyring-package true
+    assert_status 0
+    s="$TMP/site"
+    kr="$(find "$s/deb/pool/main/h/hello-keyring" -name 'hello-keyring_*_all.deb')"
+    [ -f "$kr" ]
+    [ "$(cat "$s/deb/hello.list")" = "deb [signed-by=/usr/share/keyrings/hello-keyring.asc] file://$TMP/site/deb stable main" ]
+    i="$s/index.html"
+    grep -q "sudo curl -fsSLo /usr/share/keyrings/hello-keyring.asc file://$TMP/site/hello.asc" "$i"
+    grep -q "sudo curl -fsSLo /etc/apt/sources.list.d/hello.list file://$TMP/site/deb/hello.list" "$i"
+    grep -q 'sudo apt install hello-keyring hello hello-doc libhello1' "$i"
+    grep -q "curl -fsSL file://$TMP/site/hello.asc | gpg --show-keys" "$i"
+    refute grep -q 'install -d' "$i"
+    refute grep -q '/etc/apt/keyrings' "$i"
+    gzip -cd "$s/deb/dists/stable/main/binary-amd64/Packages.gz" | grep -qx 'Package: hello-keyring'
+    # The last manifest line, in the shape the format gives it; the .deb holds the pin.
+    [ "$(tail -n 1 "$s/pkg-pages.tsv")" = "$(printf 'keyring\t-\t%s\tdeb/pool/main/h/hello-keyring/%s' "$(sha "$kr")" "${kr##*/}")" ]
+    dpkg-deb --fsys-tarfile "$kr" | tar -xOf - ./usr/share/keyrings/hello-keyring.asc | cmp - "$K/a/pin.asc"
+    # Not asked for: the old key path, and no keyring package.
+    rm -rf "$TMP/site"
+    build_signed --tag v1.2.3
+    assert_status 0
+    [ ! -e "$TMP/site/deb/pool/main/h/hello-keyring" ]
+    grep -q 'signed-by=/etc/apt/keyrings/hello.asc' "$TMP/site/deb/hello.list"
+    grep -q 'sudo install -d -m 0755 /etc/apt/keyrings' "$TMP/site/index.html"
+}
+
+@test "keyring package: an unsigned site or one without .deb files gets a notice, not a failure" {
+    need_both
+    need gpgv rpmsign rpmkeys
+    pkgs deb
+    build --tag v1.2.3 --keyring-package true
+    assert_status 0
+    assert_output_contains "unsigned"
+    [ ! -e "$TMP/site/deb/pool/main/h/hello-keyring" ]
+    rm -rf "$TMP/site" "$TMP/pkgs"
+    pkgs rpm
+    build_signed --keyring-package true
+    assert_status 0
+    assert_output_contains "for APT"
+    [ ! -e "$TMP/site/deb" ]
+}
+
+@test "keyring package: a history copy of the same version is kept instead of the fresh build" {
+    need_deb
+    need gpgv dpkg-deb
+    pkgs deb
+    build_signed --tag v1.2.3 --keyring-package true
+    assert_status 0
+    fresh="$(find "$TMP/site/deb/pool/main/h/hello-keyring" -name 'hello-keyring_*_all.deb')"
+    # The live site's copy, other bytes (an extra file), the same version.
+    dpkg-deb -R "$fresh" "$TMP/kr"
+    printf 'x\n' > "$TMP/kr/usr/share/keyrings/extra"
+    dpkg-deb --root-owner-group -Zgzip --build "$TMP/kr" "$TMP/pkgs/${fresh##*/}" > /dev/null
+    kept="$(sha "$TMP/pkgs/${fresh##*/}")"
+    [ "$kept" != "$(sha "$fresh")" ]
+    printf -- '-\t%s\t%s\tsite\n' "$kept" "${fresh##*/}" > "$TMP/h.map"
+    rm -rf "$TMP/site"
+    build_signed --tag v1.2.4 --history-map "$TMP/h.map" --keyring-package true
+    assert_status 0
+    assert_output_contains "keeping the earlier hello-keyring"
+    [ "$(sha "$TMP/site/deb/pool/main/h/hello-keyring/${fresh##*/}")" = "$kept" ]
+    [ "$(grep -c $'^keyring\t' "$TMP/site/pkg-pages.tsv")" -eq 1 ]
+    # Without --keyring-package the old copy is dropped, with a notice.
+    rm -rf "$TMP/site"
+    build_signed --tag v1.2.4 --history-map "$TMP/h.map"
+    assert_status 0
+    [ ! -e "$TMP/site/deb/pool/main/h/hello-keyring" ]
+}
+
+@test "a tampered manifest, a missing listing or a changed package fails site-check" {
+    need_deb
+    need gpgv
+    pkgs deb
+    build_signed --tag v1.2.3
+    assert_status 0
+    s="$TMP/site"
+    check --public-key "$K/a/pin.asc"
+    assert_status 0
+    cp "$s/pkg-pages.tsv" "$TMP/tsv"
+    # A line changed after signing.
+    sed -i 's/^release\tv1.2.3\t[0-9a-f]\{4\}/release\tv1.2.3\tffff/' "$s/pkg-pages.tsv"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    cp "$TMP/tsv" "$s/pkg-pages.tsv"
+    # The signature gone.
+    mv "$s/pkg-pages.tsv.asc" "$TMP/tsv.asc"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    mv "$TMP/tsv.asc" "$s/pkg-pages.tsv.asc"
+    # A package that no longer matches its line, and one the manifest doesn't list.
+    p="$s/deb/pool/main/h/hello/hello_1.2.3-1_amd64.deb"
+    cp "$p" "$TMP/orig.deb"
+    printf 'x' >> "$p"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    assert_output_contains "does not match the SHA-256"
+    cp "$TMP/orig.deb" "$p"
+    cp "$p" "$s/deb/pool/main/h/hello/extra_1.0_all.deb"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    assert_output_contains "is not listed"
+    rm "$s/deb/pool/main/h/hello/extra_1.0_all.deb"
+    check --public-key "$K/a/pin.asc"
+    assert_status 0
+    # Against no pin, a signed site's manifest is wrong: its header names the key.
+    check
+    assert_status 1
+    assert_output_contains "header"
+}
+
+@test "an unsigned site's manifest is checked too: the header, the lines and the files" {
+    need_deb
+    pkgs deb
+    build --tag v1.2.3
+    assert_status 0
+    m="$TMP/site/pkg-pages.tsv"
+    check
+    assert_status 0
+    cp "$m" "$TMP/tsv"
+    sed -i 's/^release\tv1.2.3\t[0-9a-f]\{4\}/release\tv1.2.3\tffff/' "$m"
+    check
+    assert_status 1
+    cp "$TMP/tsv" "$m"
+    sed -i 's/^#pkg-pages-manifest\t1\thello/#pkg-pages-manifest\t1\tother/' "$m"
+    check
+    assert_status 1
+    assert_output_contains "header"
+    cp "$TMP/tsv" "$m"
+    printf 'release\tv1\tnothex\tdeb/pool/x.deb\n' >> "$m"
+    check
+    assert_status 1
+    assert_output_contains "bad SHA-256"
+    cp "$TMP/tsv" "$m"
+    printf 'release\tv1\t%s\tdeb/pool/../x.deb\n' "$(printf x | sha256sum | cut -d' ' -f1)" >> "$m"
+    check
+    assert_status 1
+    assert_output_contains "bad path"
+    cp "$TMP/tsv" "$m"
+    sed -n '1,2p' "$TMP/tsv" > "$m"
+    check
+    assert_status 1
+    assert_output_contains "not listed"
+}
+
+@test "the stages work alone: site-build holds no key, site-seal signs, site-check passes" {
+    need_deb
+    need gpgv
+    pkgs deb
+    run "$LIB/site-build.sh" --packages "$TMP/pkgs" --out "$TMP/site" --base-url "file://$TMP/site" \
+        --version 1.2.3 --name hello --tag v1.2.3 --public-key "$K/a/pin.asc"
+    assert_status 0
+    [ "$(output_value signed)" = true ]
+    [ "$(output_value to-sign)" = "$TMP/site.to-sign" ]
+    [ "$(cat "$TMP/site.to-sign")" = $'deb/dists/stable/Release\npkg-pages.tsv' ]
+    [ ! -e "$TMP/site/deb/dists/stable/InRelease" ]
+    # The directory listing already names the signatures that are still to come.
+    grep -q 'href="InRelease"' "$TMP/site/deb/dists/stable/index.html"
+    grep -q 'href="Release.gpg"' "$TMP/site/deb/dists/stable/index.html"
+    check --public-key "$K/a/pin.asc"
+    assert_status 1
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
+    export REPO_SIGNING_KEY
+    run "$LIB/site-seal.sh" --site "$TMP/site" --to-sign "$TMP/site.to-sign" --public-key "$K/a/pin.asc" --import-key true
+    assert_status 0
+    check --public-key "$K/a/pin.asc"
+    assert_status 0
+    [ -s "$TMP/site/deb/dists/stable/InRelease" ]
+}
+
+@test "site-build refuses an unsigned .rpm when the pin exists, and a key that is not alone in the keyring dir" {
+    need_rpm
+    need gpg rpmkeys
+    pkgs rpm
+    run "$LIB/site-build.sh" --packages "$TMP/pkgs" --out "$TMP/site" --base-url "file://$TMP/site" \
+        --version 1.2.3 --name hello --public-key "$K/a/pin.asc"
+    assert_status 1
+    assert_output_contains "is not signed by public-key"
+    [ ! -e "$TMP/site" ]
+    run "$LIB/site-build.sh" --packages "$TMP/pkgs" --out "$TMP/site" --base-url "file://$TMP/site" \
+        --version 1.2.3 --name hello --keyring "$TMP"
+    assert_status 1
+    assert_output_contains "--keyring needs --public-key"
+}
+
+@test "site-build wants exactly one <name>-keyring_<version>_all.deb in the keyring directory" {
+    need_deb
+    need gpg dpkg-deb
+    pkgs deb
+    GITHUB_OUTPUT='' "$LIB/build-keyring.sh" --pin "$K/a/pin.asc" --name hello --out "$TMP/kr" 2> /dev/null
+    sb() { run "$LIB/site-build.sh" --packages "$TMP/pkgs" --out "$TMP/site" --base-url "file://$TMP/site" \
+        --version 1.2.3 --name hello --public-key "$K/a/pin.asc" --keyring "$TMP/kr"; }
+    sb
+    assert_status 0
+    rm -rf "$TMP/site" "$TMP/site.to-sign"
+    printf 'junk\n' > "$TMP/kr/junk.txt"
+    sb
+    assert_status 1
+    assert_output_contains "exactly one file"
+    rm "$TMP/kr/junk.txt"
+    mv "$TMP/kr"/*.deb "$TMP/kr/other_1.0_all.deb"
+    sb
+    assert_status 1
+    assert_output_contains "not hello-keyring_<version>_all.deb"
 }
 
 # --- Installing from the site (root, in a container) -----------------------------------------
