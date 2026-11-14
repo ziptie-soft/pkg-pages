@@ -19,6 +19,19 @@ inputs:
   version:
     description: The version this release publishes; the site fails to build unless it is among the packages.
     required: true
+  tag:
+    description: >-
+      This release's tag (letters, digits and . _ + / -). Set: the site lists its packages in a
+      signed manifest, pkg-pages.tsv, each under its release tag. Empty: no manifest.
+    required: false
+    default: ''
+  history-map:
+    description: >-
+      Which of the packages are earlier releases': the map fetch-history wrote (its map output),
+      listing each earlier file by tag and SHA-256. Needs tag. Without it, every package is
+      listed under tag.
+    required: false
+    default: ''
   name:
     description: >-
       Base name of the published files (<name>.asc, deb/<name>.list, rpm/<name>.repo) and of the
@@ -95,6 +108,13 @@ inputs:
       for each (true), or fail on them (false). This release's packages are always signed.
     required: false
     default: 'true'
+  keyring-package:
+    description: >-
+      Publish a <name>-keyring .deb that carries the public key, which the .list then uses as the
+      APT key and the landing page installs first (signed sites with .deb files only; else a
+      notice). A .deb only: rpm can't import a key from a package scriptlet.
+    required: false
+    default: 'false'
   directory-listings:
     description: Write an index.html into every directory (Pages serves no listings of its own).
     required: false
@@ -170,6 +190,9 @@ runs:
       env:
         INPUT_PACKAGES: ${{ inputs.packages }}
         INPUT_VERSION: ${{ inputs.version }}
+        INPUT_TAG: ${{ inputs.tag }}
+        INPUT_HISTORY_MAP: ${{ inputs.history-map }}
+        INPUT_KEYRING_PACKAGE: ${{ inputs.keyring-package }}
         INPUT_NAME: ${{ inputs.name }}
         INPUT_TITLE: ${{ inputs.title }}
         INPUT_DESCRIPTION: ${{ inputs.description }}

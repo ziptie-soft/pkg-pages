@@ -66,16 +66,36 @@ Builds the site described in [design.md#published-layout](design.md#published-la
 7. The architectures published are those of the packages plus the required ones. With only
    `all`/`noarch` packages they are `amd64 arm64` and `x86_64 aarch64`.
 8. It writes `<name>.asc` (the pin itself, revocations included), `deb/<name>.list`,
-   `rpm/<name>.repo`, the landing page (install commands for every package of `version`, and
-   every caller string HTML-escaped), `.nojekyll`, directory listings and, by default, a footer
-   linking to pkg-pages and its version (`footer: false` opts out; `footer-version` overrides the
-   version, which defaults to the action's `version.txt`). Then it merges `extra-site`, which may not
-   overwrite a file of the site or contain symbolic links. `packslip-project` adds commands for
-   the caller-published release bundle; `packslip-pin` adds its optional signer pin.
+   `rpm/<name>.repo`, and, for a signed site with `.rpm` files, `rpm/RPM-GPG-KEY-<name>` (the pin
+   without revoked or expired subkeys, which dnf imports through the `.repo`'s `gpgkey=`, because
+   rpm 4.16 can't import a pin that holds a revoked subkey), the landing page (install commands
+   for every package of `version`, and every caller string HTML-escaped), `.nojekyll`, directory
+   listings and, by default, a footer linking to pkg-pages and its version (`footer: false` opts
+   out; `footer-version` overrides the version, which defaults to the action's `version.txt`).
+   Then it merges `extra-site`, which may not overwrite a file of the site or contain symbolic
+   links. `packslip-project` adds commands for the caller-published release bundle;
+   `packslip-pin` adds its optional signer pin.
 9. Self-check: the required files exist, each required Debian architecture's `Packages` lists
-   `version`, and, when signed, `InRelease`, `Release.gpg`, every `repomd.xml.asc` and every
-   `.rpm` verify against the pin.
+   `version`, and, when signed, `InRelease`, `Release.gpg`, every `repomd.xml.asc`, every `.rpm`
+   and `pkg-pages.tsv.asc` verify against the pin, and every `.rpm` and `repomd.xml.asc` also
+   verifies against `rpm/RPM-GPG-KEY-<name>` alone.
 10. With `upload: 'true'`, it runs `actions/upload-pages-artifact` and outputs `artifact-id`.
+
+`tag`, `history-map` and `keyring-package` are the inputs of the staged build, all off by default
+so that a v1 caller sees no change:
+
+- **`tag`** (this release's tag) makes the site list its packages in `pkg-pages.tsv`, tab-separated,
+  each under its release tag, signed as `pkg-pages.tsv.asc` when the site is
+  ([design.md#published-layout](design.md#published-layout)). Without `history-map`, every
+  package is listed under `tag`.
+- **`history-map`** (`fetch-history`'s `map`, needs `tag`) says which of the packages are earlier
+  releases', by SHA-256, so each is listed under its own tag. A `.rpm` that `resign-history`
+  signs again keeps its tag.
+- **`keyring-package: 'true'`** also publishes `<name>-keyring_<version>_all.deb`, the same
+  package `build-keyring` builds. The `.list` then names it as the APT key
+  (`signed-by=/usr/share/keyrings/<name>-keyring.asc`) and the landing page installs it first. It
+  builds a `.deb` only, and only for a signed site with `.deb` files (otherwise a notice). A
+  package of the caller's named `<name>-keyring` is refused.
 
 The optional Nix inputs are `nix-archives` (newline-separated `SYSTEM=PATH` entries relative to
 the checkout), `nix-binaries` (space-separated paths inside each archive), and `nix-url-base`

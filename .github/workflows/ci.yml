@@ -217,6 +217,8 @@ jobs:
           rpm-architectures: x86_64
           public-key: test-signing/repo.asc
           signing-key: ${{ steps.fixtures.outputs.key }}
+          tag: v1.0.0
+          keyring-package: 'true'
           artifact-name: pkg-pages-selftest-site
           retention-days: '1'
 
@@ -270,6 +272,12 @@ jobs:
           test -s site/deb/dists/stable/InRelease
           test -s site/rpm/x86_64/repodata/repomd.xml.asc
           grep -q '&lt;self-test&gt;' site/index.html
+          # tag and keyring-package: a signed manifest, and the keyring package the .list names.
+          test -s site/pkg-pages.tsv.asc
+          grep -qP '^release\tv1\.0\.0\t[0-9a-f]{64}\tdeb/pool/main/p/pptest/' site/pkg-pages.tsv
+          grep -qP '^keyring\t-\t[0-9a-f]{64}\tdeb/pool/main/p/pptest-keyring/pptest-keyring_[0-9.]+_all\.deb$' site/pkg-pages.tsv
+          grep -q 'signed-by=/usr/share/keyrings/pptest-keyring.asc' site/deb/pptest.list
+          test -s site/rpm/RPM-GPG-KEY-pptest
           # The footer names the version: version.txt reaches the docker-mode container.
           grep -qF "pkg-pages</a> $(cat version.txt)</footer>" site/index.html
           ls site/rpm/x86_64/
