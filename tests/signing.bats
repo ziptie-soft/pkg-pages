@@ -15,10 +15,22 @@ load helpers
 setup_file() {
     keys
     g() { home="$1"; shift; gpg --homedir "$home" --batch --quiet --pinentry-mode loopback "$@"; }
+    # sig NAME HOME SUBKEY [GPG ARGS]: a detached signature of $K/data.txt by exactly SUBKEY, in
+    # $K/NAME.asc (made before a revocation, or at a faked time, for the gpg_verify tests).
+    printf 'hello world\n' > "$K/data.txt"
+    sig() {
+        n="$1" home="$2" sub="$3"
+        shift 3
+        g "$home" --passphrase '' "$@" --local-user "$sub!" --armor --detach-sign --output "$K/$n.asc" "$K/data.txt"
+    }
+    sig valid "$K/a/home" "$(cat "$K/a/sub")"
+    sig other "$K/b/home" "$(cat "$K/b/sub")"
 
     # r: revoke subkey 1 (the one in r/ci.asc), add subkey 2, export both pins.
     "$FIXTURES" key "$K/r" "project r"
     fpr="$(cat "$K/r/fpr")"
+    sig revsub "$K/r/home" "$(cat "$K/r/sub")"
+    sleep 1
     printf 'key 1\nrevkey\ny\n0\n\ny\nsave\n' |
         gpg --homedir "$K/r/home" --batch --pinentry-mode loopback --passphrase '' \
             --command-fd 0 --status-fd 2 --edit-key "$fpr" 2> /dev/null
@@ -31,6 +43,8 @@ setup_file() {
     # v: the whole key revoked, with the certificate gpg wrote when it made the key.
     "$FIXTURES" key "$K/v" "project v"
     fpr="$(cat "$K/v/fpr")"
+    sig revprimary "$K/v/home" "$(cat "$K/v/sub")"
+    sleep 1
     sed 's/^:-----BEGIN/-----BEGIN/' "$K/v/home/openpgp-revocs.d/$fpr.rev" | g "$K/v/home" --import 2> /dev/null
     g "$K/v/home" --armor --export "$fpr" > "$K/v/pin-revoked.asc"
 
@@ -52,6 +66,7 @@ setup_file() {
         awk -F: '$1 == "sub" { s = 1; next } $1 == "fpr" && s { print $10; exit }')"
     g "$K/x/home" --armor --export "$fpr" > "$K/x/pin.asc"
     g "$K/x/home" --passphrase '' --armor --export-secret-subkeys "$expired!" > "$K/x/expired.asc"
+    sig expsubkey "$K/x/home" "$expired" --faked-system-time=20200101T120000!
     g "$K/x/home" --passphrase '' --quick-add-key "$fpr" rsa2048 sign 3y 2> /dev/null
     unlisted="$(g "$K/x/home" --with-colons --with-subkey-fingerprints --list-keys |
         awk -F: '$1 == "fpr" { print $10 }' | tail -n 1)"
@@ -404,4 +419,65 @@ rpms() {
     assert_status 0
     [ -s "$TMP/tools.env" ]
     refute grep -q '^REPO_SIGNING_KEY=' "$TMP/tools.env"
+}
+
+# --- gpg_verify -------------------------------------------------------------------------------
+
+# verify [--allow-expired] PIN SIG [DATA]: run gpg_verify in sh.
+verify() {
+    run sh -c ". '$LIB/common.sh'; . '$LIB/signing.sh'; gpg_verify \"\$@\"" sh "$@"
+}
+
+@test "gpg_verify accepts a valid signature, detached" {
+    verify "$K/a/pin.asc" "$K/valid.asc" "$K/data.txt"
+    assert_status 0
+}
+
+@test "gpg_verify accepts a valid clearsigned file" {
+    gnupg_home
+    gpg --batch --quiet --import "$K/a/ci.asc" 2> /dev/null
+    gpg --batch --quiet --pinentry-mode loopback --passphrase '' --local-user "$(cat "$K/a/sub")!" \
+        --clearsign --output "$TMP/clear.asc" "$K/data.txt"
+    unset GNUPGHOME
+    verify "$K/a/pin.asc" "$TMP/clear.asc"
+    assert_status 0
+}
+
+@test "gpg_verify refuses a subkey revoked after it signed" {
+    verify "$K/r/pin-rotated.asc" "$K/revsub.asc" "$K/data.txt"
+    assert_status 1
+    assert_output_contains "REVKEYSIG"
+}
+
+@test "gpg_verify refuses a signature by a revoked primary" {
+    verify "$K/v/pin-revoked.asc" "$K/revprimary.asc" "$K/data.txt"
+    assert_status 1
+}
+
+@test "gpg_verify refuses an expired subkey, and --allow-expired passes it with a warning" {
+    verify "$K/x/pin.asc" "$K/expsubkey.asc" "$K/data.txt"
+    assert_status 1
+    assert_output_contains "expired subkey"
+    verify --allow-expired "$K/x/pin.asc" "$K/expsubkey.asc" "$K/data.txt"
+    assert_status 0
+    assert_output_contains "warning:"
+    assert_output_contains "expired subkey"
+}
+
+@test "gpg_verify never lets --allow-expired accept a revoked subkey" {
+    verify --allow-expired "$K/r/pin-rotated.asc" "$K/revsub.asc" "$K/data.txt"
+    assert_status 1
+}
+
+@test "gpg_verify refuses another key's signature" {
+    verify "$K/a/pin.asc" "$K/other.asc" "$K/data.txt"
+    assert_status 1
+}
+
+@test "gpg_verify refuses tampered data" {
+    cp "$K/data.txt" "$TMP/data.txt"
+    echo tamper >> "$TMP/data.txt"
+    verify "$K/a/pin.asc" "$K/valid.asc" "$TMP/data.txt"
+    assert_status 1
+    assert_output_contains "does not verify"
 }
