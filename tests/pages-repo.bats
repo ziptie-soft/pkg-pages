@@ -658,6 +658,136 @@ check() {
     assert_status 1
 }
 
+# --- site-seal.sh ----------------------------------------------------------------------------
+
+# seal_tree: a minimal site tree in $TMP/ss, with a to-sign list naming all three kinds of file.
+seal_tree() {
+    mkdir -p "$TMP/ss/deb/dists/stable" "$TMP/ss/rpm/x86_64/repodata"
+    printf 'Origin: hello\n' > "$TMP/ss/deb/dists/stable/Release"
+    printf '<repomd/>\n' > "$TMP/ss/rpm/x86_64/repodata/repomd.xml"
+    printf '#pkg-pages-manifest\t1\thello\t-\n' > "$TMP/ss/pkg-pages.tsv"
+    printf '%s\n' deb/dists/stable/Release rpm/x86_64/repodata/repomd.xml pkg-pages.tsv > "$TMP/list"
+}
+
+# seal [OPTION]...: site-seal.sh on $TMP/ss and $TMP/list with key a, in a fresh GNUPGHOME.
+# shellcheck disable=SC2120 # the options are optional
+seal() {
+    if [ -d "$TMP/gnupg" ]; then
+        gpgconf --homedir "$TMP/gnupg" --kill all > /dev/null 2>&1 || true
+        rm -rf "$TMP/gnupg"
+    fi
+    gnupg_home
+    REPO_SIGNING_KEY="$(cat "$K/a/ci.asc")"
+    export REPO_SIGNING_KEY
+    run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key "$K/a/pin.asc" \
+        --import-key true "$@"
+}
+
+@test "site-seal signs Release, repomd.xml and the manifest; the signatures verify against the pin" {
+    need gpgv
+    seal_tree
+    seal
+    assert_status 0
+    s="$TMP/ss"
+    [ "$(output_value signed)" = true ]
+    [ "$(output_value fingerprint)" = "$(cat "$K/a/fpr")" ]
+    gpg --batch --dearmor < "$K/a/pin.asc" > "$TMP/pin.gpg"
+    gpgv --keyring "$TMP/pin.gpg" "$s/deb/dists/stable/InRelease"
+    gpgv --keyring "$TMP/pin.gpg" "$s/deb/dists/stable/Release.gpg" "$s/deb/dists/stable/Release"
+    gpgv --keyring "$TMP/pin.gpg" "$s/rpm/x86_64/repodata/repomd.xml.asc" "$s/rpm/x86_64/repodata/repomd.xml"
+    gpgv --keyring "$TMP/pin.gpg" "$s/pkg-pages.tsv.asc" "$s/pkg-pages.tsv"
+    # Only the signature files were written.
+    [ "$(find "$s" -type f | wc -l)" -eq 7 ]
+}
+
+@test "site-seal refuses a path it does not sign, and signs nothing" {
+    need gpg
+    seal_tree
+    for bad in deb/pool/main/h/hello/hello.deb ../list /etc/passwd deb/dists/../Release \
+        deb/dists/stable/InRelease index.html deb/dists/stable/Release.gpg ''; do
+        printf '%s\ndeb/dists/stable/Release\n' "$bad" > "$TMP/list"
+        seal
+        assert_status 1
+        assert_output_contains "to-sign"
+        [ ! -e "$TMP/ss/deb/dists/stable/InRelease" ]
+    done
+    # The same line twice.
+    printf '%s\n%s\n' pkg-pages.tsv pkg-pages.tsv > "$TMP/list"
+    seal
+    assert_status 1
+    [ ! -e "$TMP/ss/pkg-pages.tsv.asc" ]
+}
+
+@test "site-seal refuses a symbolic link, a missing file and a file over 16 MiB" {
+    need gpg
+    seal_tree
+    # The file itself, and a directory above it.
+    mv "$TMP/ss/pkg-pages.tsv" "$TMP/elsewhere.tsv"
+    ln -s "$TMP/elsewhere.tsv" "$TMP/ss/pkg-pages.tsv"
+    seal
+    assert_status 1
+    assert_output_contains "symbolic link"
+    [ ! -e "$TMP/elsewhere.tsv.asc" ]
+    rm "$TMP/ss/pkg-pages.tsv"
+    mv "$TMP/elsewhere.tsv" "$TMP/ss/pkg-pages.tsv"
+    mv "$TMP/ss/rpm" "$TMP/rpm-elsewhere"
+    ln -s "$TMP/rpm-elsewhere" "$TMP/ss/rpm"
+    seal
+    assert_status 1
+    assert_output_contains "symbolic link"
+    [ ! -e "$TMP/rpm-elsewhere/x86_64/repodata/repomd.xml.asc" ]
+    rm "$TMP/ss/rpm"
+    seal
+    assert_status 1
+    assert_output_contains "missing"
+    mv "$TMP/rpm-elsewhere" "$TMP/ss/rpm"
+    # A file of exactly 16 MiB is fine; one byte more is not.
+    head -c 16777216 /dev/zero > "$TMP/ss/pkg-pages.tsv"
+    seal
+    assert_status 0
+    rm "$TMP/ss/pkg-pages.tsv.asc"
+    head -c 16777217 /dev/zero > "$TMP/ss/pkg-pages.tsv"
+    seal
+    assert_status 1
+    assert_output_contains "16 MiB"
+}
+
+@test "site-seal fails closed: a pin needs a key, a key needs a pin, and neither is an unsigned notice" {
+    need gpg
+    seal_tree
+    # No pin and no key: the only unsigned run.
+    unset GNUPGHOME REPO_SIGNING_KEY
+    run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key "$TMP/nope.asc"
+    assert_status 0
+    assert_output_contains "nothing is signed"
+    [ "$(output_value signed)" = false ]
+    [ ! -e "$TMP/ss/pkg-pages.tsv.asc" ]
+    # A pin and no key.
+    gnupg_home
+    run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key "$K/a/pin.asc"
+    assert_status 1
+    assert_output_contains "no signing key"
+    run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key "$K/a/pin.asc" --import-key true
+    assert_status 1
+    # A key and no pin.
+    gpg --batch --quiet --import "$K/a/ci.asc"
+    run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key ""
+    assert_status 1
+    assert_output_contains "no public-key was given"
+    # Another project's key.
+    seal_other() {
+        gpgconf --homedir "$TMP/gnupg" --kill all > /dev/null 2>&1 || true
+        rm -rf "$TMP/gnupg"
+        gnupg_home
+        REPO_SIGNING_KEY="$(cat "$K/b/ci.asc")"
+        export REPO_SIGNING_KEY
+        run "$LIB/site-seal.sh" --site "$TMP/ss" --to-sign "$TMP/list" --public-key "$K/a/pin.asc" --import-key true
+    }
+    seal_other
+    assert_status 1
+    [ ! -e "$TMP/ss/pkg-pages.tsv.asc" ]
+}
+
 # --- Installing from the site (root, in a container) -----------------------------------------
 
 @test "apt installs from the signed site with signed-by, and pins an older version" {

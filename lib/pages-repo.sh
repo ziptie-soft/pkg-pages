@@ -40,7 +40,8 @@
 #                           --public-key, as `linux-signing.sh import` does (default false)
 #
 # Signing: the site is signed when --import-key imported a key, or when GNUPGHOME is set and
-# already holds one: InRelease and Release.gpg, every .rpm (rpmsign) and every repomd.xml.
+# already holds one: every .rpm (rpmsign) here, then InRelease, Release.gpg and every repomd.xml
+# by lib/site-seal.sh.
 # Otherwise it is unsigned ([trusted=yes], gpgcheck=0). Whether a run *must* be signed is decided
 # by the import, which fails closed (docs/signing.md).
 #
@@ -235,9 +236,8 @@ if [ -n "$fpr" ]; then
     [ "$(pin_fpr "$pin")" = "$fpr" ] || die "the signing key $fpr is not the key of public-key $pin"
     if [ "$has_rpm" = true ]; then require_tools rpmsign rpmkeys; fi
 fi
-gpg_sign() {
-    gpg --batch --yes --pinentry-mode loopback --passphrase '' --local-user "$fpr" "$@"
-}
+to_sign="$work/to-sign"   # the metadata files lib/site-seal.sh signs, once the site is laid out
+: > "$to_sign"
 
 mkdir -p "$out"
 [ -z "$fpr" ] || cp "$pin" "$out/$name.asc"
@@ -284,8 +284,7 @@ if [ "$has_deb" = true ]; then
         mv Release.tmp "dists/$suite/Release"
     )
     if [ -n "$fpr" ]; then
-        gpg_sign --clearsign --output "$deb/dists/$suite/InRelease" "$deb/dists/$suite/Release"
-        gpg_sign --armor --detach-sign --output "$deb/dists/$suite/Release.gpg" "$deb/dists/$suite/Release"
+        printf 'deb/dists/%s/Release\n' "$suite" >> "$to_sign"
         deb_line="deb [signed-by=/etc/apt/keyrings/$name.asc] $base_url/deb $suite $component"
     else
         deb_line="deb [trusted=yes] $base_url/deb $suite $component"
@@ -326,7 +325,7 @@ if [ "$has_rpm" = true ]; then
             sign_rpm "$pin" "$@"
         fi
         createrepo_c --quiet --compatibility "$dir" > /dev/null
-        [ -z "$fpr" ] || gpg_sign --armor --detach-sign --output "$dir/repodata/repomd.xml.asc" "$dir/repodata/repomd.xml"
+        [ -z "$fpr" ] || printf 'rpm/%s/repodata/repomd.xml\n' "$a" >> "$to_sign"
     done
     if [ -n "$fpr" ]; then
         rpm_check="gpgcheck=1
@@ -343,6 +342,13 @@ baseurl=$base_url/rpm/\$basearch
 enabled=1
 $rpm_check
 EOF
+fi
+
+# --- Seal ------------------------------------------------------------------------------------
+# InRelease, Release.gpg and every repomd.xml.asc: lib/site-seal.sh signs the files named in the
+# list with the key already in GNUPGHOME and checks each signature against the pin.
+if [ -n "$fpr" ]; then
+    "$lib/site-seal.sh" --site "$out" --to-sign "$to_sign" --public-key "$pin" --import-key false
 fi
 
 # --- The landing page ------------------------------------------------------------------------
