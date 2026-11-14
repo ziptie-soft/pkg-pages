@@ -217,6 +217,19 @@ reset_calls() {
     rm -f "$TMP"/call.* "$TMP"/install.* "$TMP/installs" "$TMP/calls" "$TMP/docker.args" "$TMP/docker.env"
 }
 
+@test "build-repo, signed: resign-history defaults to false, and true is passed on to the history stage" {
+    signed_inputs
+    build_repo
+    assert_status 0
+    [ "$(stages)" = "build-keyring sign-rpm sign-history site-build site-seal site-check" ]
+    [ "$(carg 3 --resign-unproven)" = false ]
+    reset_calls
+    export INPUT_RESIGN_HISTORY=true
+    build_repo
+    assert_status 0
+    [ "$(carg 3 --resign-unproven)" = true ]
+}
+
 @test "build-repo, signed: keyring-package false opts out of the keyring, and with it of the stage" {
     signed_inputs
     export INPUT_KEYRING_PACKAGE=false
@@ -576,17 +589,21 @@ spy() {
     refute grep -q '^keyring' site/pkg-pages.tsv
 }
 
-@test "build-repo end to end: an earlier .rpm that nothing proves needs resign-history" {
+@test "build-repo end to end: an earlier .rpm that nothing proves is an error unless resign-history is true" {
     real_inputs
     with_secret
     write_map release
-    export INPUT_RESIGN_HISTORY=false
+    # The default is false.
     run "$LIB/action.sh" build-repo
     assert_status 1
     assert_output_contains "nothing proves its bytes"
     assert_output_contains "hello-1.2.2-1.x86_64.rpm"
     [ ! -e site ]
     [ ! -e site.work ]
+    export INPUT_RESIGN_HISTORY=false
+    run "$LIB/action.sh" build-repo
+    assert_status 1
+    assert_output_contains "nothing proves its bytes"
     export INPUT_RESIGN_HISTORY=true
     run "$LIB/action.sh" build-repo
     assert_status 0

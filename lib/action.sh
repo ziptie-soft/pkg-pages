@@ -195,7 +195,7 @@ build_repo() {
     export INPUT_NAME="$br_name" INPUT_BASE_URL="$br_base_url"
     br_keyring_package="$(input_or KEYRING_PACKAGE true)"
     check_bool keyring-package "$br_keyring_package"
-    check_bool resign-history "$(input_or RESIGN_HISTORY true)"
+    check_bool resign-history "$(input_or RESIGN_HISTORY false)"
     check_bool upload "$(input_or UPLOAD true)"
     br_extra="$(input EXTRA_SITE)"
     [ -z "$br_extra" ] || check_relpath extra-site "$br_extra"
