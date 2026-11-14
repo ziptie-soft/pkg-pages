@@ -5,8 +5,11 @@
 #
 # This is the one-process form of the staged build: it signs the .rpm files, builds the keyring
 # package, then runs lib/site-build.sh (the layout), lib/site-seal.sh (the signatures of the
-# metadata) and lib/site-check.sh (what a client will see), one after the other. The stages are
-# also usable alone, so that the one that parses packages need not hold the key.
+# metadata) and lib/site-check.sh (what a client will see), one after the other. No action calls
+# it any more: build-repo (lib/action.sh) runs the stages in separate containers, so that the key
+# never meets the code that parses packages, and takes earlier releases as --history. This script
+# keeps its own older interface (earlier releases inside --packages, found by --history-map) for
+# tests/pages-repo.bats and local builds; don't use it where a key is at stake.
 #
 # Usage:
 #   pages-repo.sh --packages DIR --out DIR --base-url URL --version VERSION --name NAME [OPTION]...

@@ -1,7 +1,8 @@
 # build-repo: the root action, and the one GitHub Marketplace lists. Builds the APT and DNF
 # repositories site from a directory of .deb/.rpm files, signed when a pin and a key are given,
 # and uploads it as a Pages artifact. Contract: docs/actions.md#build-repo. The work is done by
-# lib/action.sh → lib/pages-repo.sh.
+# lib/action.sh, which runs the stages of the build (build-keyring, sign-rpm, build-site,
+# seal-site, check-site) in separate containers, so the key never meets the package parsing.
 name: pkg-pages
 description: Build signed APT and DNF/RPM repositories, with an optional hash-pinned Nix flake
 author: ziptie-soft
@@ -12,24 +13,28 @@ branding:
 inputs:
   packages:
     description: >-
-      Directory holding every .deb and .rpm the site publishes: this release's and the earlier
-      ones (see fetch-history). Name, version and architecture are read from each package's
-      metadata, not from its file name.
+      Directory holding this release's .deb and .rpm files only (the earlier releases' go in
+      history). Name, version and architecture are read from each package's metadata, not from
+      its file name.
     required: true
   version:
     description: The version this release publishes; the site fails to build unless it is among the packages.
     required: true
   tag:
     description: >-
-      This release's tag (letters, digits and . _ + / -). Set: the site lists its packages in a
-      signed manifest, pkg-pages.tsv, each under its release tag. Empty: no manifest.
+      This release's tag (letters, digits and . _ + / -). The site lists its packages in a
+      manifest, pkg-pages.tsv (signed when the site is), each under its release tag.
+    required: true
+  history:
+    description: >-
+      Directory of earlier releases' packages: fetch-history's dir. Needs history-map. Empty: no
+      earlier releases. The directory is never modified.
     required: false
     default: ''
   history-map:
     description: >-
-      Which of the packages are earlier releases': the map fetch-history wrote (its map output),
-      listing each earlier file by tag and SHA-256. Needs tag. Without it, every package is
-      listed under tag.
+      The map fetch-history wrote for history (its map output): each earlier file by tag,
+      SHA-256, path and source. Needs history. Never modified.
     required: false
     default: ''
   name:
@@ -104,8 +109,11 @@ inputs:
     default: ''
   resign-history:
     description: >-
-      Re-sign earlier releases' .rpm files that don't verify against public-key, with a warning
-      for each (true), or fail on them (false). This release's packages are always signed.
+      An earlier release's .rpm from a GitHub release (fetch-history from releases) that doesn't
+      verify against public-key is unproven: sign it again with a warning (true), or fail on it
+      (false). Files proven by the live site's manifest need no permission, and are signed again
+      with the current subkey whenever it didn't sign them. This release's packages are always
+      signed.
     required: false
     default: 'true'
   keyring-package:
@@ -191,6 +199,7 @@ runs:
         INPUT_PACKAGES: ${{ inputs.packages }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_TAG: ${{ inputs.tag }}
+        INPUT_HISTORY: ${{ inputs.history }}
         INPUT_HISTORY_MAP: ${{ inputs.history-map }}
         INPUT_KEYRING_PACKAGE: ${{ inputs.keyring-package }}
         INPUT_NAME: ${{ inputs.name }}
