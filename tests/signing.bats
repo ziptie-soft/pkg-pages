@@ -809,3 +809,19 @@ history_run() {
     run "$LIB/linux-signing.sh" --pin "$K/a/pin.asc" sign-history --map "$TMP/map" "$TMP/nope"
     assert_status 1
 }
+
+# The read-only container has no writable home and no GNUPGHOME (check-rpm, check-site): the helpers
+# that only read the pin must not need either. HOME under a regular file can't be created, even by root.
+@test "the pin helpers work with no GNUPGHOME and a home that can't be created" {
+    need gpg gpgv
+    : > "$TMP/notdir"
+    run env -u GNUPGHOME HOME="$TMP/notdir/home" sh -c ". '$LIB/common.sh'; . '$LIB/signing.sh'
+        pin_fpr '$K/a/pin.asc'; pin_subkeys '$K/a/pin.asc'
+        pin_rpm_key '$K/a/pin.asc' '$TMP/key.asc'
+        gpg_verify '$K/a/pin.asc' '$K/valid.asc' '$K/data.txt'"
+    assert_status 0
+    assert_output_contains "$(cat "$K/a/fpr")"
+    assert_output_contains "$(cat "$K/a/sub")"
+    [ -s "$TMP/key.asc" ]
+    [ ! -e "$TMP/notdir/home" ]
+}

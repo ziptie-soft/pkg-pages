@@ -7,14 +7,27 @@
 # subkeys and their revocations. CI gets one secret signing subkey of it. Signing fails closed:
 # once a pin exists, every run must be signed by a subkey it lists.
 #
-# All gpg calls use GNUPGHOME, which the caller points at a fresh, private directory that is
-# removed after the step (lib/run.sh does that).
+# The calls that hold or use the secret key use GNUPGHOME, which the caller points at a fresh,
+# private directory that is removed after the step (lib/run.sh does that). The calls that only read
+# a public key go through pin_gpg, which doesn't need GNUPGHOME or a writable home directory: the
+# read-only container has neither.
+
+# pin_gpg ARG...: run gpg with ARG... in a private, empty home of its own, removed on return, so it
+# neither reads nor writes GNUPGHOME or ~/.gnupg. Not make_tmpdir: callers run it in $(...), where a
+# cleanup registered by make_tmpdir would be lost.
+pin_gpg() {
+    _pgh="$(mktemp -d "${TMPDIR:-/tmp}/pkg-pages.XXXXXX")" || die "mktemp failed"
+    _pgrc=0
+    gpg --homedir "$_pgh" "$@" || _pgrc=$?
+    rm -rf "$_pgh"
+    return "$_pgrc"
+}
 
 # pin_fpr PIN: print the primary key fingerprint of PIN. Fails unless PIN holds exactly one public
 # key and no secret key material.
 pin_fpr() {
     [ -f "$1" ] || die "public-key $1 does not exist"
-    _colons="$(gpg --batch --with-colons --show-keys "$1" 2> /dev/null)" ||
+    _colons="$(pin_gpg --batch --with-colons --show-keys "$1" 2> /dev/null)" ||
         die "public-key $1 is not an OpenPGP certificate"
     if printf '%s\n' "$_colons" | grep -q '^sec:'; then
         die "public-key $1 holds secret key material; commit only the public key"
@@ -26,7 +39,7 @@ pin_fpr() {
 
 # pin_subkeys PIN: print the fingerprints of every subkey PIN lists, one per line.
 pin_subkeys() {
-    gpg --batch --with-colons --show-keys "$1" |
+    pin_gpg --batch --with-colons --show-keys "$1" |
         awk -F: '$1 == "sub" { s = 1; next } $1 == "fpr" && s { print $10; s = 0 }'
 }
 
@@ -46,7 +59,7 @@ pin_rpm_key() {
     gpg --homedir "$_khome" --batch --armor --export-options export-minimal,export-clean \
         --export-filter 'drop-subkey=revoked -t || expired -t' --export "$_kfpr" > "$2" 2> /dev/null ||
         die "could not make the dnf key from public-key $1"
-    _kok="$(gpg --batch --with-colons --show-keys "$2" 2> /dev/null |
+    _kok="$(pin_gpg --batch --with-colons --show-keys "$2" 2> /dev/null |
         awk -F: '$1 == "sub" && index($12, "s") && $2 !~ /[re]/ { n++ } END { print n + 0 }')"
     [ "$_kok" -ge 1 ] || die "public-key $1 has no signing subkey that is neither revoked nor expired"
 }
@@ -150,7 +163,7 @@ gpg_verify() {
     _vfpr="$(pin_fpr "$_vpin")"
     _vdir=''
     make_tmpdir _vdir
-    gpg --batch --dearmor < "$_vpin" > "$_vdir/pin.gpg" 2> /dev/null || die "public-key $_vpin can't be read"
+    pin_gpg --batch --dearmor < "$_vpin" > "$_vdir/pin.gpg" 2> /dev/null || die "public-key $_vpin can't be read"
     _vrc=0
     _vstatus="$(gpgv --status-fd 1 --keyring "$_vdir/pin.gpg" "$@" 2> /dev/null)" || _vrc=$?
     rm -rf "$_vdir"
