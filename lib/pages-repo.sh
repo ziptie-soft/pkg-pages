@@ -607,17 +607,8 @@ if [ "$listings" = true ]; then
 fi
 
 # --- Self-check ------------------------------------------------------------------------------
-# What a client will see: the files exist, the release is listed, and the signatures verify
-# against the pin rather than against whatever key did the signing.
-need() { [ -s "$out/$1" ] || die "self-check: $1 is missing or empty"; }
-need index.html
+# The SHA-256 of every archive is in the flake: nix-flake.sh wrote it, so this guards the writer.
 if [ -n "$nix_archives" ]; then
-    need nix/flake.tar.gz
-    need nix/flake.nix
-    need nix/flake.lock
-    tar -tzf "$out/nix/flake.tar.gz" | LC_ALL=C sort > "$work/nix-files"
-    printf 'flake.lock\nflake.nix\n' > "$work/nix-expected"
-    cmp -s "$work/nix-expected" "$work/nix-files" || die "self-check: flake.tar.gz must contain only flake.lock and flake.nix"
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
         archive=${entry#*=}
@@ -630,44 +621,10 @@ if [ -n "$nix_archives" ]; then
 $nix_archives
 EOF
 fi
-if [ "$has_deb" = true ]; then
-    need "deb/$name.list"
-    need "deb/dists/$suite/Release"
-    for a in $deb_list; do
-        need "deb/dists/$suite/$component/binary-$a/Packages.gz"
-    done
-    # Every required architecture's index lists the release (cargo-deb's 1.2.3-1 included).
-    for a in $deb_archs; do
-        [ "$a" != all ] || continue
-        gzip -cd "$out/deb/dists/$suite/$component/binary-$a/Packages.gz" | sed -n 's/^Version: //p' > "$work/versions"
-        ok=false
-        while IFS= read -r v; do
-            if pkg_matches_version deb "$v" "$version"; then ok=true; fi
-        done < "$work/versions"
-        [ "$ok" = true ] || die "self-check: binary-$a/Packages does not list $version"
-    done
-fi
-if [ "$has_rpm" = true ]; then
-    need "rpm/$name.repo"
-    for a in $rpm_list; do need "rpm/$a/repodata/repomd.xml"; done
-fi
-if [ -n "$fpr" ]; then
-    need "$name.asc"
-    verify() { gpg_verify "$pin" "$@"; }
-    if [ "$has_deb" = true ]; then
-        need "deb/dists/$suite/InRelease"
-        verify "$out/deb/dists/$suite/InRelease"
-        verify "$out/deb/dists/$suite/Release.gpg" "$out/deb/dists/$suite/Release"
-    fi
-    if [ "$has_rpm" = true ]; then
-        grep -qx gpgcheck=1 "$out/rpm/$name.repo" || die "self-check: gpgcheck=1 is missing from $name.repo"
-        for a in $rpm_list; do
-            verify "$out/rpm/$a/repodata/repomd.xml.asc" "$out/rpm/$a/repodata/repomd.xml"
-        done
-        set -- "$out"/rpm/*/*.rpm
-        check_rpm "$pin" "$@"
-    fi
-fi
+# What a client will see (lib/site-check.sh): the files exist, the release is listed, and the
+# signatures verify against the pin rather than against whatever key did the signing.
+"$lib/site-check.sh" --site "$out" --name "$name" --version "$version" --suite "$suite" \
+    --component "$component" --deb-architectures "$deb_archs" ${fpr:+--public-key "$pin"}
 
 n_deb="$(grep -c '^deb	' "$index" || true)"
 n_rpm="$(grep -c '^rpm	' "$index" || true)"
