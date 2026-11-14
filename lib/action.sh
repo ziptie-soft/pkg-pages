@@ -207,7 +207,8 @@ install_test() {
     [ -n "$distro" ] || die "distro is empty"
     PKG_PAGES_SMOKE="$(input SMOKE)"
     export PKG_PAGES_SMOKE
-    with_files "$lib/run.sh" docker --image "$distro" --env PKG_PAGES_SMOKE -- \
+    # --net: it installs the packages, with the package manager.
+    with_files "$lib/run.sh" docker --image "$distro" --net --env PKG_PAGES_SMOKE -- \
         "$lib/install-test.sh" --pin "$pin"
 }
 

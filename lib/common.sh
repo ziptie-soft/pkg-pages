@@ -138,9 +138,19 @@ make_tmpdir() {
 $_dir"
     eval "$1=\$_dir"
 }
+# register_container ENGINE NAME: force-remove the container NAME with ENGINE (docker, podman)
+# when the script exits, the same way make_tmpdir's directories are removed.
+_cleanup_containers=
+register_container() {
+    _cleanup_containers="$_cleanup_containers
+$1 $2"
+}
 _cleanup() {
     printf '%s\n' "$_cleanup_paths" | while IFS= read -r p; do
         [ -z "$p" ] || rm -rf "$p"
+    done
+    printf '%s\n' "$_cleanup_containers" | while IFS=' ' read -r e n; do
+        [ -z "$n" ] || "$e" rm -f "$n" > /dev/null 2>&1 || true
     done
 }
 trap _cleanup EXIT
