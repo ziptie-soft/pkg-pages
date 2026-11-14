@@ -25,10 +25,10 @@ sudo dnf install <name>
 
 ```sh
 # APT (Debian, Ubuntu)
-sudo install -d -m 0755 /etc/apt/keyrings
-sudo curl -fsSLo /etc/apt/keyrings/<name>.asc https://<owner>.github.io/<repo>/<name>.asc
-echo 'deb [signed-by=/etc/apt/keyrings/<name>.asc] https://<owner>.github.io/<repo>/deb stable main' | sudo tee /etc/apt/sources.list.d/<name>.list
-sudo apt update && sudo apt install <name>
+sudo curl -fsSLo /usr/share/keyrings/<name>-keyring.asc https://<owner>.github.io/<repo>/<name>.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/<name>.list https://<owner>.github.io/<repo>/deb/<name>.list
+sudo apt update
+sudo apt install <name>-keyring <name>
 ```
 
 When the release workflow enables Nix support:
@@ -49,8 +49,9 @@ commands, so users who know one know them all ([docs/design.md](docs/design.md#p
 - **Signing is optional and fails closed.** With no committed public key and no secret, the
   repositories are published unsigned. Once the key is committed, every release must be signed
   with it, or the release fails ([docs/signing.md](docs/signing.md)).
-- **An offline primary key, with only a signing subkey in CI.** Subkeys can be rotated or
-  revoked without users trusting a new key; they download `<name>.asc` again to get the change
+- **An offline primary key, with only a signing subkey in CI.** A standby subkey is published
+  from the start, so rotation and revocation need no new trust. APT users get them through the
+  `<name>-keyring` package; DNF steps depend on the version
   ([docs/signing.md](docs/signing.md#rotating-or-revoking-the-subkey)).
 - **Earlier versions stay installable.** The last N releases' packages are fetched from GitHub
   Releases and republished, so `dnf downgrade` and `apt install pkg=1.2.3` keep working.
