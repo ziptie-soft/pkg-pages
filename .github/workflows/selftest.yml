@@ -2,7 +2,17 @@ name: Self-test
 
 # publish.yml called the way callers call it, from this repository, with deploy: false: once
 # without a signing environment and once with one (it must run either way), then installs from
-# the site it built with apt and dnf. Unsigned: no key exists in this repository.
+# the site it built with apt and dnf. Those two runs are unsigned: no key exists for them.
+#
+# A third run is signed, with a throwaway key: the pin is test-signing/selftest.asc and the secret
+# is SELFTEST_SIGNING_KEY. A pull request from a fork gets no secrets, so the `gate` job decides,
+# and without the key that run is skipped with a notice. Its install tests check what a user gets:
+# pptest-keyring on Debian, gpgkey=.../rpm/RPM-GPG-KEY-pptest on Fedora.
+#
+# Nothing here contacts a live site: every call passes keep-releases: 0, which fetches no history
+# (history-from is left at its default, the site, which would not exist yet).
+#
+# The last job, `Self-test`, is the one required check: it needs every job above.
 #
 # publish.yml runs the actions at the commit it is pinned to (dev/self-pin.sh), not this
 # checkout's; ci.yml tests this checkout's actions.
@@ -111,6 +121,68 @@ jobs:
       artifact-prefix: selftest-b
       retention-days: 1
 
+  # Secrets can't be used in a job-level `if`, so the key's presence goes through a step.
+  gate:
+    name: Signed run available?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # checkout, for the pin
+    outputs:
+      signed: ${{ steps.gate.outputs.signed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for the pin and the key
+        id: gate
+        shell: bash
+        env:
+          # Only whether it is set: the throwaway self-test key signs nothing outside this test.
+          HAS_KEY: ${{ secrets.SELFTEST_SIGNING_KEY != '' }} # jactionlint ignore=secrets-outside-env
+        run: |
+          set -euo pipefail
+          if [ -f test-signing/selftest.asc ] && [ "${HAS_KEY}" = true ]; then
+            echo "signed=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "signed=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Signed self-test skipped: test-signing/selftest.asc or the SELFTEST_SIGNING_KEY secret is missing (a fork's pull request gets no secrets)"
+          fi
+
+  # Signed with the throwaway key, no environment: the secret is passed to this call only.
+  signed:
+    name: publish.yml, signed
+    needs: [packages, gate]
+    if: ${{ needs.gate.outputs.signed == 'true' }}
+    permissions:
+      contents: read
+      pages: write # as above
+      id-token: write # the same
+    uses: ./.github/workflows/publish.yml
+    with:
+      version: 1.0.0
+      tag: v1.0.0-selftest
+      deb-artifacts: selftest-deb-*
+      rpm-artifacts: selftest-rpm-*
+      name: pptest
+      base-url: file:///srv/site
+      deb-architectures: amd64
+      rpm-architectures: x86_64
+      public-key: test-signing/selftest.asc
+      signing-environment: ''
+      keep-releases: 0
+      install-tests: '[{"distro":"fedora","arch":"x86_64"},{"distro":"debian","arch":"x86_64"}]'
+      smoke: test -f /usr/share/pptest-data/1.0.0
+      deploy: false
+      artifact-prefix: selftest-c
+      retention-days: 1
+    # A repository secret on purpose: a reusable-workflow call can't have an environment, and
+    # publish.yml's own environment can't see a caller's secret. The key is a throwaway made for
+    # this test (test-signing/selftest.asc), never a project's signing key.
+    secrets:
+      signing-key: ${{ secrets.SELFTEST_SIGNING_KEY }} # jactionlint ignore=secrets-outside-env
+
   install:
     name: Install from the site (${{ matrix.distro }})
     needs: [no-environment, with-environment]
@@ -134,12 +206,17 @@ jobs:
           SIGNED_B: ${{ needs.with-environment.outputs.signed }}
           RPM_ID: ${{ needs.no-environment.outputs.signed-rpm-artifact-id }}
           PAGE_URL: ${{ needs.no-environment.outputs.page-url }}
+          KEYRING_ID: ${{ needs.no-environment.outputs.keyring-artifact-id }}
+          KEYRING_ID_B: ${{ needs.with-environment.outputs.keyring-artifact-id }}
         run: |
           set -euo pipefail
           test "${SIGNED}" = false
           test "${SIGNED_B}" = false
           test -n "${RPM_ID}"
           test -z "${PAGE_URL}"
+          # Unsigned: no keyring package, whatever keyring-package says.
+          test -z "${KEYRING_ID}"
+          test -z "${KEYRING_ID_B}"
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -165,3 +242,110 @@ jobs:
           fi
           docker run --rm -v "${PWD}/site:/mnt/site:ro" "${image}" sh -euc \
             "cp -R /mnt/site /srv/site && chmod -R a+rX /srv/site && ${cmd} && test -f /usr/share/pptest/1.0.0* && test -f /usr/share/pptest-data/1.0.0"
+
+  # What a user does with the signed site's own files: the keyring first, then the packages. APT
+  # gets the key from the keyring package, dnf from gpgkey= in the .repo.
+  install-signed:
+    name: Install from the signed site (${{ matrix.distro }})
+    needs: signed
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # checkout, for images.env
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [debian, fedora]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the outputs
+        shell: bash
+        env:
+          SIGNED: ${{ needs.signed.outputs.signed }}
+          FINGERPRINT: ${{ needs.signed.outputs.fingerprint }}
+          RPM_ID: ${{ needs.signed.outputs.signed-rpm-artifact-id }}
+          KEYRING_ID: ${{ needs.signed.outputs.keyring-artifact-id }}
+          PAGE_URL: ${{ needs.signed.outputs.page-url }}
+        run: |
+          set -euo pipefail
+          test "${SIGNED}" = true
+          test -n "${FINGERPRINT}"
+          test -n "${RPM_ID}"
+          test -n "${KEYRING_ID}"
+          test -z "${PAGE_URL}"
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.signed.outputs.site-artifact-id }}
+          path: site-artifact
+
+      - name: Install pptest from file:///srv/site
+        shell: bash
+        env:
+          DISTRO: ${{ matrix.distro }}
+        run: |
+          set -euo pipefail
+          mkdir site
+          tar -xf site-artifact/artifact.tar -C site
+          key="$(printf '%s' "${DISTRO}" | tr '[:lower:]' '[:upper:]')_IMAGE"
+          image="$(sed -n "s/^${key}=//p" images.env)"
+          if [ "${DISTRO}" = fedora ]; then
+            grep -qx gpgcheck=1 site/rpm/pptest.repo
+            grep -qx repo_gpgcheck=1 site/rpm/pptest.repo
+            grep -qx 'gpgkey=file:///srv/site/rpm/RPM-GPG-KEY-pptest' site/rpm/pptest.repo
+            test -s site/rpm/RPM-GPG-KEY-pptest
+            cmd='cp /srv/site/rpm/pptest.repo /etc/yum.repos.d/ && dnf install -y -q pptest pptest-data'
+          else
+            grep -q 'signed-by=/usr/share/keyrings/pptest-keyring.asc' site/deb/pptest.list
+            cmd='install -d /usr/share/keyrings && cp /srv/site/pptest.asc /usr/share/keyrings/pptest-keyring.asc && cp /srv/site/deb/pptest.list /etc/apt/sources.list.d/ && apt-get update -qq && apt-get install -y -qq pptest-keyring pptest pptest-data && cmp /usr/share/keyrings/pptest-keyring.asc /srv/site/pptest.asc'
+          fi
+          docker run --rm -v "${PWD}/site:/mnt/site:ro" "${image}" sh -euc \
+            "cp -R /mnt/site /srv/site && chmod -R a+rX /srv/site && ${cmd} && test -f /usr/share/pptest/1.0.0* && test -f /usr/share/pptest-data/1.0.0"
+
+  # The one required check. Skipping is allowed only for the signed run and its install, and only
+  # when the gate said there is no key.
+  self-test:
+    name: Self-test
+    if: ${{ always() }}
+    needs: [packages, no-environment, with-environment, gate, signed, install, install-signed]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job succeeded, or was skipped where allowed
+        shell: bash
+        env:
+          PACKAGES: ${{ needs.packages.result }}
+          NO_ENVIRONMENT: ${{ needs.no-environment.result }}
+          WITH_ENVIRONMENT: ${{ needs.with-environment.result }}
+          GATE: ${{ needs.gate.result }}
+          GATE_SIGNED: ${{ needs.gate.outputs.signed }}
+          SIGNED: ${{ needs.signed.result }}
+          INSTALL: ${{ needs.install.result }}
+          INSTALL_SIGNED: ${{ needs.install-signed.result }}
+        run: |
+          set -euo pipefail
+          fail=0
+          want() { # job result expected
+            if [ "$2" != "$3" ]; then
+              echo "::error::$1: $2, expected $3"
+              fail=1
+            fi
+          }
+          want packages "${PACKAGES}" success
+          want no-environment "${NO_ENVIRONMENT}" success
+          want with-environment "${WITH_ENVIRONMENT}" success
+          want gate "${GATE}" success
+          want install "${INSTALL}" success
+          # The signed run is skipped exactly when the gate found no key.
+          if [ "${GATE_SIGNED}" = true ]; then
+            want signed "${SIGNED}" success
+            want install-signed "${INSTALL_SIGNED}" success
+          else
+            want signed "${SIGNED}" skipped
+            want install-signed "${INSTALL_SIGNED}" skipped
+          fi
+          exit "${fail}"
