@@ -95,8 +95,12 @@ Two layers in one repository, versioned together:
 | `sign-rpm` | Fedora (rpm 6) | yes | signs in place, then `check-rpm` |
 | `check-rpm` | Fedora, or any image with rpmkeys | no | against the *committed* pin, not the key used |
 | `install-test` | the target distro image | no | `dnf install ./x.rpm`, `apt-get install ./x.deb`, smoke |
-| `fetch-history` | runner (`gh`) | no | last N published releases' assets |
-| `build-repo` (root) | Debian trixie | yes, when signed | apt-ftparchive, createrepo_c, gpg, rpmsign |
+| `fetch-history` | runner (`gh`, `curl`, `gpgv`) | no | last N published releases, from the live site or their assets |
+| `build-keyring` | Debian trixie | no | the `<name>-keyring` `.deb` |
+| `build-site` | Debian trixie | no | apt-ftparchive, createrepo_c; lists the files to sign |
+| `seal-site` | Debian trixie | yes | gpg only; signs that list |
+| `check-site` | Debian trixie | no | checks the sealed site, uploads it |
+| `build-repo` (root) | Debian trixie | yes, when signed | all of the above in one job, for callers with their own job layout |
 | `package-rust` | the build runner | no | optional: cargo-deb, cargo-generate-rpm |
 | deploy | runner | no | `actions/deploy-pages` only, in its own job |
 
@@ -105,15 +109,33 @@ Two layers in one repository, versioned together:
 ```text
 caller: build ──► artifacts (.deb, .rpm, anything else is ignored)
 publish.yml:
-  sign    (env: signing-environment)  key file only → download → keep .deb/.rpm → sign-rpm → upload
-  verify  (matrix: install-tests)     download by ID → install-test (check-rpm first) → smoke
-  repo    (env: signing-environment)  download by ID → fetch-history → build-repo → upload <prefix>-site
-  deploy  (env: pages-environment)    skip-if-newer → merge extra-artifact-ids → deploy-pages
+  prepare ─► history ─► sign ─► verify ─┐
+     └───────────────────────────────────┴─► build ─► seal ─► check ─► deploy
 ```
 
-`sign` and `repo` never build or run caller code. `deploy` holds `pages: write` and `id-token:
-write`, and nothing else does. `verify` runs the caller's `smoke` command, and no secret exists in
-that job.
+| Job | Environment | Permissions | Key | Pages token | Does |
+|---|---|---|---|---|---|
+| prepare | – | `contents: read` | no | no | checks the inputs; checks out the pin only; keeps the `.deb`/`.rpm`/Nix files of the artifacts; `build-keyring` (a `.deb`) |
+| history | – | `contents: read` | no | no | `fetch-history`, from the live site (checked against its signed manifest) or the releases |
+| sign | `signing-environment` | none | **yes** | no | `sign-rpm` on this release's `.rpm` files and on the proven history |
+| verify | – | none | no | no | `install-test` (the keyring `.deb` too), then the caller's `smoke` |
+| build | – | none | no | no | `build-site` over everything; uploads the unsigned site and, on their own, the text files to sign |
+| seal | `signing-environment` | none | **yes** | no | `seal-site`: signs `Release`, `repomd.xml` and `pkg-pages.tsv`; always runs |
+| check | – | none | no | no | puts the signatures on the site; `check-site` against the pin; uploads the site |
+| deploy | `pages-environment` | `contents: read`, `pages: write`, `id-token: write` | no | **yes** | `skip-if-newer`, `extra-artifact-ids`, `deploy-pages` |
+
+Artifacts: `<prefix>-public-key`, `-deb`, `-rpm-unsigned`, `-keyring`, `-nix` (prepare), `-history`
+(history), `-rpm`, `-history-resigned` (sign), `-site-unsealed`, `-to-sign` (build),
+`-signatures` (seal) and `-site` (check). Every download is by artifact ID.
+
+The key is in `sign` and `seal` only. `build` parses every package, history included, and holds no
+secret. `sign` runs `rpmsign` with the key on this release's own `.rpm` files, which are the
+caller's build output and trusted as such, and on history whose bytes the signed manifest or the
+pin proves; untrusted bytes never meet the key. `seal` runs `gpg` on three kinds of text file that
+`seal-site` re-validates, and signs whatever metadata `build` produced: a compromised `build`
+could get one site's metadata signed, but can't take the key. `verify` runs the caller's `smoke`
+command, and no secret exists in that job. `deploy` holds `pages: write` and `id-token: write`,
+and nothing else does. No job runs caller code with a secret.
 
 ## Security model
 
@@ -127,7 +149,8 @@ Assets: the signing subkey, the caller's users' trust in the pin, the Pages depl
 - **Fail closed** ([signing.md](signing.md#fail-closed-matrix)). Unsigned output happens only when
   both the pin and the key are absent.
 - **Separation.** The key never shares a job with a build, the caller's smoke code or the Pages
-  token. It lives in a fresh `GNUPGHOME` (or a `--rm` container) for one step.
+  token, and the job that parses the packages never holds it ([D12](#decisions)). It lives in a
+  fresh `GNUPGHOME` (or a `--rm` container) for one step.
 - **Environment scoping.** The key sits in a GitHub environment restricted to the default branch,
   so a workflow on another branch can't reach it, even a modified copy of the caller's workflow.
 - **Pinning.** Callers pin `ziptie-soft/pkg-pages` by commit SHA. pkg-pages pins every action it
@@ -136,12 +159,13 @@ Assets: the signing subkey, the caller's users' trust in the pin, the Pages depl
   that runs.
 - **Untrusted inputs.** Inputs reach `run:` only through `env:`. Names, paths and URLs are
   validated. The landing page HTML-escapes every caller string.
-- **History is trusted as published.** `fetch-history` republishes the assets of earlier GitHub
-  releases, and the site is signed over them: `.rpm` files that don't verify against the pin are
-  re-signed, and the signed `InRelease` lists every `.deb`. Whoever can publish or edit a release
-  of the caller's repository, including any workflow token with `contents: write`, can therefore
-  get packages signed. Turn on immutable releases and limit who can create tags, or set
-  `resign-history: false` ([signing.md](signing.md#setting-up-a-project)).
+- **History is proven, not trusted.** By default earlier releases come from the live site, by the
+  SHA-256 values of its signed `pkg-pages.tsv` ([D11](#decisions)), and a release's assets are
+  never republished unchecked. `.rpm` files that the manifest proves are signed again by the
+  current subkey; one from a GitHub release that doesn't verify against the pin fails the build.
+  `resign-history: true` (for one bootstrap run) signs it anyway, and then whoever can publish or
+  edit a release of the caller's repository can get packages signed: turn on immutable releases
+  ([signing.md](signing.md#setting-up-a-project)) and drop it again.
 
 Threats out of scope: a compromised GitHub, a caller that keeps the key as a repository secret,
 and a malicious maintainer of the caller's repository.
@@ -160,7 +184,7 @@ if it only exists in the environment", and "If the caller workflow doesn't pass 
 secret, the secret resolves to an empty string in the reusable workflow".
 
 So: `signing-environment` is an input, used as `environment: ${{ inputs.signing-environment }}`
-in the `sign` and `repo` jobs. The caller maps its secret to `secrets.signing-key`, so it
+in the `sign` and `seal` jobs. The caller maps its secret to `secrets.signing-key`, so it
 chooses the secret's name. `secrets: inherit` only works within one organisation or enterprise,
 so third parties map the secret explicitly. Environment branch policies are checked against the
 caller's ref.
@@ -243,17 +267,38 @@ bandwidth. Pages must deploy from GitHub Actions (`build_type: workflow`).
   `*-architectures` inputs are assertions, not filters.
 - **D6. One stable suite, `main` component.** The same layout as all three source projects, and
   their users' existing `.list` and `.repo` files keep working after migration.
-- **D7. History from GitHub Releases** (last 9 by default), not from the live site. Releases are
-  the permanent archive and are attested by the caller's build. Re-signing older `.rpm` files
-  with the current subkey is expected, and documented as a difference from their release-page
-  copies. `resign-history: false` refuses it instead.
+- **D7. History from the live site** (last 9 releases by default), checked against its signed
+  manifest. This replaces v1's rule (history from GitHub Releases, re-signing whatever came):
+  a release's assets can be edited by anyone who can publish a release, while the site's manifest
+  is signed by the key. GitHub Releases still decide which releases are kept, and
+  `history-from: releases` stays as the bootstrap for a site that predates the manifest.
+  Re-signing earlier `.rpm` files with the current subkey is expected, and documented as a
+  difference from their release-page copies.
 - **D8. Apache-2.0**, like the rest of ziptie-soft.
 - **D9. Optional Nix flakes install prebuilt archives.** Each archive URL and SHA-256 is written
-  into an unsigned flake; the action never builds binaries. The key-holding publish job only lists
-  and hashes the archives, without extracting or running them. Only the current release is
+  into an unsigned flake; the action never builds binaries. The publish job that builds the site only
+  lists and hashes the archives, without extracting or running them. Only the current release is
   included. Static or musl binaries are recommended because glibc binaries may need patching on
   NixOS. A binary cache would add a secret and consume GitHub Pages' 1 GB site limit, while
   signing it adds no trust for imported tarballs.
+- **D10. Keyring packages.** A signed site publishes `<name>-keyring`, a `.deb` that installs the
+  pin as `/usr/share/keyrings/<name>-keyring.asc`, with the version `YYYYMMDD.HHMMSS` of the pin's
+  newest signature. `apt upgrade` then delivers new subkeys and revocations, and `deb/<name>.list`
+  uses that path as `signed-by`. There is no `.rpm`: rpm can't import a key from a package
+  scriptlet, because the transaction holds the rpm database lock. DNF takes the pin without its
+  revoked or expired subkeys from `rpm/RPM-GPG-KEY-<name>` through `gpgkey=`, which rpm 4.16 can
+  import where it can't import the full pin.
+- **D11. History from the site, by a signed manifest.** `pkg-pages.tsv` lists every package file
+  by SHA-256 and release tag, and `pkg-pages.tsv.asc` signs it. The next release downloads the
+  files it lists, checks each SHA-256 and keeps them. So the bytes are the ones the key signed
+  over, whatever a release's assets say. The live manifest may be signed by an expired subkey
+  (expiry is not a compromise) but never by a revoked one. The cost is one bootstrap release for a
+  site without a manifest ([upgrading.md](upgrading.md)).
+- **D12. Two-stage build.** The key never meets code that parses untrusted packages. `build`
+  (`build-site`) has no key; `sign` and `seal` have it and run only `rpmsign` and `gpg`, on this
+  release's own `.rpm` files, on history the manifest proves and on three kinds of text file.
+  The packages are verified before the build: `build-site` refuses an `.rpm` that doesn't verify
+  against the pin. Accepted risk: `rpmsign` still parses this release's `.rpm` headers in `sign`.
 
 ## Open questions
 
