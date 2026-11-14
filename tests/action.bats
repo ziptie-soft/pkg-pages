@@ -975,24 +975,42 @@ fetch_arg_after() {
     awk -v a="$1" 'prev == a { print; exit } { prev = $0 }' "$TMP/fetch.args"
 }
 
-@test "fetch-history defaults: releases, as before, with no site arguments" {
+@test "fetch-history defaults: the live site, checked against the repository's pin, with the map beside dir" {
     fetch_args
     assert_status 0
     [ "$(fetch_arg_after --dir)" = hist ]
-    [ "$(fetch_arg_after --from)" = releases ]
+    [ "$(fetch_arg_after --from)" = site ]
+    [ "$(fetch_arg_after --url)" = https://skellla.github.io/Star_Forge ]
+    [ "$(fetch_arg_after --name)" = star-forge ]
+    [ "$(fetch_arg_after --public-key)" = packaging/signing/repo.asc ]
+    [ "$(fetch_arg_after --map)" = hist.map.tsv ]
     [ "$(fetch_arg_after --keep)" = 9 ]
     [ "$(fetch_arg_after --patterns)" = '*.deb *.rpm' ]
     [ "$(fetch_arg_after --repository)" = SkeLLLa/Star_Forge ]
     [ "$(fetch_arg_after --include-prereleases)" = false ]
     [ -z "$(fetch_arg_after --tags)" ]
-    [ -z "$(fetch_arg_after --map)" ]
+}
+
+@test "fetch-history from releases: no site arguments, and the map still defaults to <dir>.map.tsv" {
+    export INPUT_FROM=releases
+    fetch_args
+    assert_status 0
+    [ "$(fetch_arg_after --from)" = releases ]
+    [ "$(fetch_arg_after --map)" = hist.map.tsv ]
     for a in --url --name --public-key; do
         refute grep -qx -- "$a" "$TMP/fetch.args"
     done
+    # A trailing slash and a nested directory: the map is beside the directory, never in it.
+    export INPUT_DIR=out/hist/
+    fetch_args
+    [ "$(fetch_arg_after --map)" = out/hist.map.tsv ]
+    export INPUT_MAP=custom.tsv
+    fetch_args
+    [ "$(fetch_arg_after --map)" = custom.tsv ]
 }
 
 @test "fetch-history from the site: url, name and pin default as build-repo's do" {
-    export INPUT_FROM=site INPUT_TAGS='v1.0.0
+    export INPUT_TAGS='v1.0.0
 v0.9.0' INPUT_MAP=hist.map
     fetch_args
     assert_status 0

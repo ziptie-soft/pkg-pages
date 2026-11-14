@@ -14,10 +14,10 @@ inputs:
     required: true
   from:
     description: >-
-      Where the files come from: releases (the assets of the GitHub releases) or site (the live
-      site, checked against its signed pkg-pages.tsv manifest).
+      Where the files come from: site (the live site, checked against its signed pkg-pages.tsv
+      manifest; needs public-key) or releases (the assets of the GitHub releases).
     required: false
-    default: releases
+    default: site
   url:
     description: >-
       With from site, where the live site is served (https://, or file:/// for tests). Defaults to
@@ -26,8 +26,9 @@ inputs:
     default: ''
   public-key:
     description: >-
-      With from site, the path, in the caller's checkout, of the committed public key (the pin). File
-      present: the manifest must be signed by it. File absent: the site must be unsigned.
+      With from site, the path, in the caller's checkout, of the committed public key (the pin), as
+      build-repo's public-key. File present: the manifest must be signed by it. File absent: the
+      site must be unsigned.
     required: false
     default: packaging/signing/repo.asc
   name:
@@ -44,7 +45,7 @@ inputs:
   map:
     description: >-
       Path to write the history map to (one line per file: tag, SHA-256, path in dir, and
-      site or release), for build-site and sign-rpm. Empty: no map.
+      site or release), for build-repo, build-site and sign-rpm. Empty: <dir>.map.tsv, beside dir.
     required: false
     default: ''
   keep:
@@ -79,7 +80,7 @@ outputs:
     description: Space-separated tags whose files were fetched.
     value: ${{ steps.run.outputs.tags }}
   map:
-    description: The history map's path, when map is set.
+    description: The history map's path.
     value: ${{ steps.run.outputs.map }}
 
 runs:

@@ -460,13 +460,15 @@ check_rpm() {
 fetch_history() {
     dir="$(input DIR)"
     check_relpath dir "$dir"
-    from="$(input_or FROM releases)"
+    from="$(input_or FROM site)"
     case "$from" in
         releases | site) ;;
         *) die "from must be 'releases' or 'site', not '$from'" ;;
     esac
+    # The map goes beside dir, never into it: dir holds packages only.
     map="$(input MAP)"
-    [ -z "$map" ] || check_relpath map "$map"
+    map="${map:-${dir%/}.map.tsv}"
+    check_relpath map "$map"
     # Newlines or spaces between the tags; the script reads words.
     tags="$(printf '%s' "$(input TAGS)" | tr '\n' ' ')"
     # The site's address and name default as build-repo's do, so the same repository finds its own site.

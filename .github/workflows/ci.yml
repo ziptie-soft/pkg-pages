@@ -512,19 +512,18 @@ jobs:
             '
           done
 
-      # The next release: its history comes from the live site (here a file:/// URL), checked against
-      # the signed manifest, and is laid beside the new packages by build-site.
+      # The next release: its history comes from the live site (the default; here a file:/// URL),
+      # checked against the signed manifest, and is laid beside the new packages by build-site. The
+      # map goes to its default, history.map.tsv.
       - name: fetch-history (from the site)
         id: history
         uses: ./fetch-history
         with:
           dir: history
-          from: site
           url: file://${{ github.workspace }}/site1
           name: pptest
           public-key: test-signing/repo.asc
           tags: v1.0.0
-          map: history.map
 
       # The history follows the current subkey: files it signed are left alone, others that the
       # manifest proved are signed again. Here site 1's files are the current subkey's own.
@@ -586,7 +585,7 @@ jobs:
         run: |
           set -euo pipefail
           test "${HISTORY_TAGS}" = v1.0.0
-          test "${HISTORY_MAP}" = history.map
+          test "${HISTORY_MAP}" = history.map.tsv
           # Every file of the map is still the bytes the map names, after sign-rpm rewrote it.
           while IFS=$'\t' read -r _ sha path _; do
             echo "${sha}  history/${path}" | sha256sum --check --quiet -
