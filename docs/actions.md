@@ -301,10 +301,11 @@ it passes with a notice if `allow-unsigned` is `'true'` and fails otherwise.
 
 `uses: ziptie-soft/pkg-pages/fetch-history@<sha>` (`lib/fetch-history.sh`; runs on the runner).
 
-`from` says where earlier releases' files come from. In both modes the GitHub releases decide
-which releases are kept, unless `tags` lists them.
+`from` says where earlier releases' files come from: the live site (the default) or the GitHub
+releases. In both modes the GitHub releases decide which releases are kept, unless `tags` lists
+them.
 
-**`from: releases`** (the default) lists the newest non-draft releases with `gh release list`
+**`from: releases`** lists the newest non-draft releases with `gh release list`
 (non-prerelease unless `include-prereleases`), skips `exclude-tag` and takes the first `keep`.
 Then `gh release download` fetches their assets matching `patterns` into `dir`. Existing files are
 kept: an asset identical to a file of that name is skipped, and one that differs is stored as
@@ -315,10 +316,12 @@ needs `contents: read` on `repository`. The assets are republished as the releas
 whoever can publish or edit a release can add packages to the signed site
 ([design.md](design.md#security-model)).
 
-**`from: site`** takes the files from the live site instead, and needs `curl`, `gpgv`, `gpg` and
-`sha256sum` on the runner (and `gh`, unless `tags` is set).
+**`from: site`** (the default) takes the files from the live site, and needs `curl`, `gpgv`, `gpg`
+and `sha256sum` on the runner (and `gh`, unless `tags` is set).
 
-1. `url` defaults to `build-repo`'s `base-url` default; `name` to the repository name.
+1. `url` defaults to `build-repo`'s `base-url` default; `name` to the repository name; and
+   `public-key` to `build-repo`'s, `packaging/signing/repo.asc`: pass the same pin you build with,
+   or set `from: releases`.
 2. It downloads `<url>/pkg-pages.tsv` and its `.asc`. With a pin that exists, the manifest must
    carry a valid signature of the pin's key and name that key in its header. An expired subkey is
    accepted, because expiry is not a compromise; a revoked one is not. Without a pin, the site
@@ -333,13 +336,15 @@ whoever can publish or edit a release can add packages to the signed site
 5. `curl` retries a transient error three times: the one exception to "nothing is retried".
 
 Site mode fails when the site has no `pkg-pages.tsv` (a site built before the manifest: run once
-with `from: releases`), when the pin exists but the site has no signature, and when the site is
+with `from: releases`, and `resign-history: 'true'` in `build-repo` if its `.rpm` files are
+unsigned), when the pin exists but the site has no signature, and when the site is
 signed but no pin exists. With `keep: 0` it fetches nothing.
 
-`map` writes the history map, one line per file in `dir`: the tag, the SHA-256, the path relative
-to `dir`, and `site` or `release` (`-` as the tag for the keyring package). `build-site` finds each
-file's release tag in it, and `sign-rpm` reads which files are proven. Without `map`, nothing
-changes. Outputs: `tags`, and `map` when it is set.
+`map` is where the history map is written, one line per file in `dir`: the tag, the SHA-256, the
+path relative to `dir`, and `site` or `release` (`-` as the tag for the keyring package). It
+defaults to `<dir>.map.tsv`, beside `dir` and never in it. `build-repo` and `build-site` find each
+file's release tag in it, and `sign-rpm` reads which files are proven. Outputs: `tags` and `map`.
+Pass `dir` and `map` on as `build-repo`'s `history` and `history-map`.
 
 `build-repo` signs earlier `.rpm` files again with the current subkey, so those differ from their
 release-page copies by the signature. One from a release that doesn't verify against the pin is
